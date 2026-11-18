@@ -1,28 +1,13 @@
-# CodnestX Official Website Template (React 18 + Vite & Standalone HTML)
+# CodnestX Website Template (v3.0 — GSAP + Lenis Motion System & React + Vite)
 
-## What's Included & Updated
-1. **Representable, Bold Typography (`animations.css` & `index.html`)**:
-   - Loaded Google Fonts `Plus Jakarta Sans`, `Manrope`, and `Inter` (weights 500, 600, 700, 800).
-   - Upgraded all headings (`h1`, `h2`, `h3`, `h4`), KPI numbers, navigation items, capability pills, and body text so typography is crisp, bold, and authoritative.
-2. **Official CodnestX KPIs (with `45+` Clients Served correction)**:
-   - `50+` — **Projects Delivered**
-   - `45+` — **Clients Served** (updated from `30+`)
-   - `5+` — **Industries Served**
-   - `AI` — **Driven Delivery**
-   - `CRM + ERP` — **Business System Expertise**
-   - `99.9%` — **Uptime SLA**
-   - Displayed both in the 5-card KPI bar right under the Hero section AND in the 6-card Bento Grid section.
-3. **Complete CodnestX Company Data (`codnestx.com`, `/solutions`, `/services`, `/platforms`, `/methods`, `/portfolio`, `/contact`)**:
-   - **Hero & Navigation**: Matches `codnestx.com` (`Home`, `Solutions`, `AI`, `Portfolio`, `Industries`, `Platforms`, `Process`, `FAQs`, `Contact`, `AI-NATIVE DELIVERY` badge, `Book Free Process Audit`, `See Systems We Build`, and capability pills `CRM Automation`, `ERP Systems`, `HRMS Portals`, `AI Workflow Tools`).
-   - **5 Built Systems**: Interactive `View System Flow` modals for Sales CRM, Operations ERP, Workforce HRMS, Admin Control Panel, and PlanX AI Project OS.
-   - **10 Portfolio Case Studies & 8 Common Process Gaps**: Filterable showcase with `Apex Logistics OS`, `Zenith AI Broker`, `Rutu Group CRM`, `Kalyan Jewellers Hub`, `YAJYA`, `360 Solutions`, `Akshar Infoline`, `Mend & Mind`, `Solstice Architecture`, and `M&R Education`.
-   - **9-Stage Delivery Method, Industries Accordion, 4-Slide Testimonials Carousel & Ahmedabad HQ Contact Flow**.
-
-## How to Run
-- **Option A (React + Vite Development Server)**:
-  ```bash
-  npm install
-  npm run dev
-  ```
-- **Option B (Direct Browser Preview)**:
-  Open `index.html` directly in Chrome/Edge or via VS Code Live Server.
+## Key Updates in v3.0
+1. **Missing Logos Integrated (`practo.svg` & `unicommerce.svg`) + Shadows & Optical Alignment**:
+   - Processed and embedded the uploaded Practo (`images.jpg`) and UNV/Unicommerce (`images.png`) logos into `logos/integrations/` and `public/logos/integrations/`.
+   - Added subtle drop-shadows behind all 39 integration logos and multi-layered elevation shadows on each tile with strict optical centering.
+2. **Unified GSAP 3.12.5 + ScrollTrigger + Flip + Draggable + Lenis 1.1.13 Motion System**:
+   - Single token definition (`src/motion/tokens.js` & CSS `:root` tokens) and reusable React primitives (`src/motion/primitives.jsx`: `<Reveal>`, `<SplitHeading>`, `<Stagger>`, `<ParallaxImage>`, `<CountUp>`, `useScrollTrigger`).
+   - Buttery Lenis smooth scrolling driven by `gsap.ticker`, slim 18px-blur header that hides on scroll-down and reveals on scroll-up, and a single sliding `Flip` active nav pill.
+3. **Section Rebuilds & Anti-AI Audit**:
+   - **KPI Bento (`#kpi-bento-section`)**: Restored a real rotating 3D spherical globe (`#cx-bento-globe-canvas`) at `devicePixelRatio` (cap 2) with dotted continents, wireframe rings, and animated connection arcs.
+   - **Before -> After Carousel (`#before-after-section`)**: All 6 slides rendered once in the DOM, dynamic SVG cubic-Bezier connector drawing from Before items to the After card, 4 real metrics + 4 outcomes, and a single unified control bar.
+   - **Portfolio Title Cards (`#portfolio-explorer`)**: All 10 portfolio cards + 8 Common Process Gaps rendered in the DOM once with 16:10 visual previews, one neutral meta line, and smooth `GSAP Flip` filtering + sliding tab indicator.
