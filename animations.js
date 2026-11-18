@@ -1497,8 +1497,8 @@
       var lottieInner = lottieWrapper.firstElementChild;
       var frozenSvg = lottieInner ? lottieInner.querySelector("svg") : null;
       if (lottieInner && frozenSvg) {
-        var DESKTOP_JSON = "/animations/workflow-desktop.json";
-        var MOBILE_JSON = "/animations/workflow-mobile.json";
+        var DESKTOP_JSON = import.meta.env.BASE_URL + "animations/workflow-desktop.json";
+        var MOBILE_JSON = import.meta.env.BASE_URL + "animations/workflow-mobile.json";
         var currentMode = null;
         var currentAnim = null;
         var mountEl = null;
