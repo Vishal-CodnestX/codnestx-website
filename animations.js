@@ -915,10 +915,9 @@
         });
         if (pill) btn.insertBefore(pill, btn.firstChild);
         if (hasGSAP) window.gsap.killTweensOf(cards);
-        var matching = cards.filter(function (card) {
+        var visible = cards.filter(function (card) {
           return filter === "all" || card.getAttribute("data-category") === filter;
         });
-        var visible = matching.slice(0, 5);
         cards.forEach(function (card) {
           card.hidden = visible.indexOf(card) === -1;
           card.style.display = "";
