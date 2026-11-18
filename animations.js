@@ -915,17 +915,20 @@
         });
         if (pill) btn.insertBefore(pill, btn.firstChild);
         if (hasGSAP) window.gsap.killTweensOf(cards);
-        var visible = cards.filter(function (card) {
-          var match = filter === "all" || card.getAttribute("data-category") === filter;
-          card.style.display = match ? "" : "none";
+        var matching = cards.filter(function (card) {
+          return filter === "all" || card.getAttribute("data-category") === filter;
+        });
+        var visible = matching.slice(0, 5);
+        cards.forEach(function (card) {
+          card.hidden = visible.indexOf(card) === -1;
+          card.style.display = "";
           card.style.opacity = "1";
-          card.style.transform = "none";
-          return match;
+          card.style.removeProperty("transform");
         });
         if (hasGSAP && !reduced) window.gsap.fromTo(visible,
           { opacity: 0, y: 10 },
           { opacity: 1, y: 0, duration: 0.3, stagger: 0.025, ease: "power2.out", clearProps: "opacity,transform" });
-        if (status) status.textContent = filter === "all" ? "Showing all 10 projects" : "Showing " + visible.length + " " + btn.textContent.trim() + " projects";
+        if (status) status.textContent = filter === "all" ? "Showing " + visible.length + " featured projects" : "Showing " + visible.length + " " + btn.textContent.trim() + " projects";
         if (hasST) window.ScrollTrigger.refresh();
       }
       buttons.forEach(function (btn, index) {
