@@ -101,6 +101,7 @@
     var prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     var hasGSAP = typeof window.gsap !== "undefined";
     var hasST = hasGSAP && typeof window.ScrollTrigger !== "undefined";
+    if (hasGSAP && typeof window.gsap.config === "function") { window.gsap.config({ nullTargetWarn: false }); }
     var hasFlip = hasGSAP && typeof window.Flip !== "undefined";
     var hasLenis = typeof window.Lenis !== "undefined";
 
@@ -120,18 +121,20 @@
     var lenis = null;
     if (hasLenis && !prefersReduced) {
       lenis = new window.Lenis({
-        lerp: 0.095,
-        wheelMultiplier: 0.95,
+        lerp: 0.148,
+        wheelMultiplier: 1.08,
         touchMultiplier: 1.5,
         smoothWheel: true,
-        syncTouch: false
+        syncTouch: false,
+        autoRaf: false
       });
 
+      window.__cxLenis = lenis;
       if (hasST) {
         lenis.on("scroll", window.ScrollTrigger.update);
       }
       if (hasGSAP) {
-        window.gsap.ticker.lagSmoothing(500, 33);
+        window.gsap.ticker.lagSmoothing(0);
         window.gsap.ticker.add(function (time) {
           lenis.raf(time * 1000);
         });
@@ -144,30 +147,46 @@
       }
     }
 
-    // Smart Header: shrink after 80px, hide on scroll-down, reveal on scroll-up
+    // Smart Header: shrink after 80px, hide on scroll-down, reveal on scroll-up (rAF-throttled)
     var header = document.getElementById("cx-site-header");
     var lastY = window.scrollY || 0;
     var modalOpen = false;
     var mobileMenuOpen = false;
+    var headerScrolled = false;
+    var headerHidden = false;
+    var headerScrollQueued = false;
 
-    function onWindowScroll() {
+    function applyHeaderScroll() {
+      headerScrollQueued = false;
       var y = window.scrollY || window.pageYOffset || 0;
       if (header) {
-        if (y > 80) {
-          header.classList.add("is-scrolled");
-        } else {
-          header.classList.remove("is-scrolled");
+        var nextScrolled = y > 80;
+        if (nextScrolled !== headerScrolled) {
+          headerScrolled = nextScrolled;
+          header.classList.toggle("is-scrolled", nextScrolled);
         }
         if (y > 180 && y - lastY > 8 && !mobileMenuOpen && !modalOpen) {
-          header.classList.add("is-hidden");
+          if (!headerHidden) {
+            headerHidden = true;
+            header.classList.add("is-hidden");
+          }
         } else if (lastY - y > 6 || y <= 100) {
-          header.classList.remove("is-hidden");
+          if (headerHidden) {
+            headerHidden = false;
+            header.classList.remove("is-hidden");
+          }
         }
       }
       lastY = y;
     }
+    function onWindowScroll() {
+      if (!headerScrollQueued) {
+        headerScrollQueued = true;
+        requestAnimationFrame(applyHeaderScroll);
+      }
+    }
     window.addEventListener("scroll", onWindowScroll, { passive: true });
-    onWindowScroll();
+    applyHeaderScroll();
 
     // Sliding Active Nav Pill via GSAP Flip
     var navLinks = Array.from(document.querySelectorAll(".cx-nav-link[data-section]"));
@@ -215,7 +234,7 @@
       mobileDrawer.setAttribute("aria-hidden", String(!mobileMenuOpen));
       if (mobileMenuOpen) {
         mobileDrawer.classList.add("is-open");
-        if (lenis) lenis.stop();
+        if (lenis && typeof lenis.stop === "function") lenis.stop();
         if (hasGSAP && !prefersReduced) {
           window.gsap.fromTo(
             mobileDrawer.querySelectorAll(".cx-mobile-link, .cx-mobile-cta"),
@@ -225,7 +244,7 @@
         }
       } else {
         mobileDrawer.classList.remove("is-open");
-        if (lenis && !modalOpen) lenis.start();
+        if (lenis && !modalOpen && typeof lenis.start === "function") lenis.start();
       }
     }
     if (mobileMenuBtn) {
@@ -418,23 +437,38 @@
         var targetVal = parseFloat(el.getAttribute("data-countup") || "0");
         var decimals = parseInt(el.getAttribute("data-decimals") || "0", 10);
         var suffix = el.getAttribute("data-suffix") || "";
-        var proxy = { val: 0 };
-        g.to(proxy, {
-          val: targetVal,
-          duration: TOKENS.dur.countUp,
-          ease: "power2.out",
-          scrollTrigger: {
-            trigger: el,
-            start: "top 90%",
-            once: true
-          },
-          onUpdate: function () {
-            el.textContent = proxy.val.toFixed(decimals) + suffix;
-          },
-          onComplete: function () {
-            el.textContent = targetVal.toFixed(decimals) + suffix;
-          }
-        });
+        var hasAnimated = false;
+        function runCount() {
+          if (hasAnimated) return;
+          hasAnimated = true;
+          var proxy = { val: 0 };
+          g.to(proxy, {
+            val: targetVal,
+            duration: TOKENS.dur.countUp,
+            ease: "power2.out",
+            onUpdate: function () {
+              el.textContent = proxy.val.toFixed(decimals) + suffix;
+            },
+            onComplete: function () {
+              el.textContent = targetVal.toFixed(decimals) + suffix;
+            }
+          });
+        }
+        if (hasST) {
+          window.ScrollTrigger.create({
+            trigger: el.closest(".cx-bento-tile") || el,
+            start: "top 92%",
+            once: true,
+            onEnter: runCount
+          });
+        } else if ("IntersectionObserver" in window) {
+          var io = new IntersectionObserver(function (entries) {
+            if (entries[0] && entries[0].isIntersecting) { runCount(); io.disconnect(); }
+          }, { threshold: 0.15 });
+          io.observe(el);
+        } else {
+          runCount();
+        }
       });
     }
 
@@ -444,60 +478,173 @@
     //    - #cx-bento-lat-globe-canvas (99.9% Uptime SLA - image_45700b.png)
     // ==========================================================================
     (function initRotatingGlobes() {
-      var patches = [
-        { lat0: 10, lat1: 55, lon0: -125, lon1: -65 },
-        { lat0: -45, lat1: 10, lon0: -80, lon1: -35 },
-        { lat0: 35, lat1: 65, lon0: -10, lon1: 45 },
-        { lat0: -32, lat1: 32, lon0: -15, lon1: 50 },
-        { lat0: 8, lat1: 60, lon0: 50, lon1: 140 },
-        { lat0: -38, lat1: -12, lon0: 115, lon1: 152 }
+      // Accurate simplified world continent polygons [latDeg, lonDeg] for crisp 3D globe rendering
+      var CONTINENT_POLYGONS = [
+        // North America
+        [[70,-162],[71,-135],[69,-105],[63,-82],[56,-62],[47,-53],[43,-66],[35,-75],[25,-80],[29,-90],[26,-97],[18,-95],[14,-87],[9,-80],[15,-93],[22,-106],[32,-117],[40,-124],[49,-126],[59,-138],[61,-152],[65,-166]],
+        // Greenland
+        [[82,-32],[77,-18],[69,-24],[60,-44],[67,-54],[76,-68],[81,-52]],
+        // South America
+        [[11,-75],[10,-62],[4,-51],[-5,-35],[-14,-39],[-23,-43],[-35,-56],[-48,-66],[-55,-68],[-46,-74],[-30,-72],[-18,-71],[-5,-81],[4,-77]],
+        // Europe
+        [[70,28],[65,14],[58,6],[53,5],[48,-4],[43,-9],[36,-6],[37,0],[43,4],[45,12],[40,18],[38,24],[42,29],[48,38],[56,42],[64,42],[69,36]],
+        // UK & Ireland
+        [[58,-5],[57,-2],[51,1],[50,-5],[54,-5]],
+        // Africa
+        [[36,-6],[37,10],[32,16],[31,32],[22,37],[12,44],[11,51],[2,45],[-10,40],[-24,35],[-34,25],[-34,18],[-22,14],[-6,12],[4,9],[5,-4],[11,-16],[21,-17],[31,-10]],
+        // Madagascar
+        [[-13,49],[-18,50],[-25,47],[-24,44],[-16,45]],
+        // Asia (including Middle East, India, China, SE Asia, Siberia)
+        [[69,38],[72,72],[73,108],[70,145],[66,176],[60,164],[52,142],[42,132],[38,128],[31,122],[22,114],[16,108],[10,105],[14,100],[20,93],[22,88],[15,80],[8,77],[15,74],[23,68],[25,61],[23,59],[15,52],[13,44],[28,35],[36,36],[41,29],[44,40],[55,44]],
+        // Japan
+        [[44,144],[39,141],[34,136],[32,130],[36,136],[41,140]],
+        // Indonesia / Borneo
+        [[6,117],[1,118],[-3,115],[-2,109],[3,111]],
+        // Australia
+        [[-12,131],[-12,136],[-16,145],[-26,153],[-35,151],[-38,144],[-35,136],[-32,126],[-34,115],[-22,114],[-16,123]],
+        // New Zealand
+        [[-35,173],[-41,176],[-46,168],[-42,171]]
       ];
 
-      function inContinent(latDeg, lonDeg) {
-        for (var i = 0; i < patches.length; i++) {
-          var p = patches[i];
-          if (latDeg >= p.lat0 && latDeg <= p.lat1 && lonDeg >= p.lon0 && lonDeg <= p.lon1) {
-            return true;
+      // Pre-convert continent rings to unit-sphere 3D vectors (baseX, baseY, baseZ)
+      var DEG = Math.PI / 180;
+      var continentRings3D = CONTINENT_POLYGONS.map(function (ring) {
+        // Subdivide longer edges so continents curve smoothly around the sphere
+        var dense = [];
+        for (var i = 0; i < ring.length; i++) {
+          var a = ring[i];
+          var b = ring[(i + 1) % ring.length];
+          var dLat = b[0] - a[0];
+          var dLon = b[1] - a[1];
+          var segs = Math.max(1, Math.ceil(Math.hypot(dLat, dLon) / 5));
+          for (var s = 0; s < segs; s++) {
+            var t = s / segs;
+            var lat = (a[0] + dLat * t) * DEG;
+            var lon = (a[1] + dLon * t) * DEG;
+            dense.push({
+              bx: Math.cos(lat) * Math.sin(lon),
+              by: -Math.sin(lat),
+              bz: Math.cos(lat) * Math.cos(lon)
+            });
           }
         }
-        return false;
-      }
+        return dense;
+      });
 
       var dpr = Math.min(2, window.devicePixelRatio || 1);
 
-      // --- Globe A: #cx-bento-globe-canvas (Industries Bento Card) ---
+      // --- Globe A: #cx-bento-globe-canvas (Industries Bento Card — 60fps, 14 Global Connected Locations, 18 3D SLERP Arcs) ---
       var canvasA = document.getElementById("cx-bento-globe-canvas");
       var ctxA = canvasA ? canvasA.getContext("2d") : null;
       var sizeA = 220;
-      var dotsA = [];
       var hubsA = [
-        { lat: (23.02 * Math.PI) / 180, lon: (72.57 * Math.PI) / 180, main: true },
-        { lat: (51.5 * Math.PI) / 180, lon: (-0.12 * Math.PI) / 180 },
-        { lat: (37.77 * Math.PI) / 180, lon: (-122.4 * Math.PI) / 180 },
-        { lat: (25.2 * Math.PI) / 180, lon: (55.27 * Math.PI) / 180 },
-        { lat: (-33.86 * Math.PI) / 180, lon: (151.2 * Math.PI) / 180 }
+        { name: "Ahmedabad", lat: 23.02 * DEG, lon: 72.57 * DEG, main: true },
+        { name: "Mumbai", lat: 19.08 * DEG, lon: 72.88 * DEG },
+        { name: "Bengaluru", lat: 12.97 * DEG, lon: 77.59 * DEG },
+        { name: "Dubai", lat: 25.20 * DEG, lon: 55.27 * DEG },
+        { name: "Riyadh", lat: 24.71 * DEG, lon: 46.68 * DEG },
+        { name: "London", lat: 51.50 * DEG, lon: -0.12 * DEG },
+        { name: "Frankfurt", lat: 50.11 * DEG, lon: 8.68 * DEG },
+        { name: "New York", lat: 40.71 * DEG, lon: -74.00 * DEG },
+        { name: "San Francisco", lat: 37.77 * DEG, lon: -122.42 * DEG },
+        { name: "Toronto", lat: 43.65 * DEG, lon: -79.38 * DEG },
+        { name: "Sao Paulo", lat: -23.55 * DEG, lon: -46.63 * DEG },
+        { name: "Singapore", lat: 1.35 * DEG, lon: 103.82 * DEG },
+        { name: "Tokyo", lat: 35.68 * DEG, lon: 139.65 * DEG },
+        { name: "Sydney", lat: -33.86 * DEG, lon: 151.20 * DEG }
+      ].map(function (h) {
+        return {
+          name: h.name,
+          lat: h.lat,
+          lon: h.lon,
+          main: !!h.main,
+          bx: Math.cos(h.lat) * Math.sin(h.lon),
+          by: -Math.sin(h.lat),
+          bz: Math.cos(h.lat) * Math.cos(h.lon)
+        };
+      });
+
+      // 9 clean, globally balanced delivery arcs (halved for clarity and smooth visuals)
+      var arcPairsA = [
+        [0, 3],   // Ahmedabad -> Dubai
+        [0, 5],   // Ahmedabad -> London
+        [0, 11],  // Ahmedabad -> Singapore
+        [3, 6],   // Dubai -> Frankfurt
+        [5, 7],   // London -> New York
+        [7, 8],   // New York -> San Francisco
+        [7, 10],  // New York -> Sao Paulo
+        [8, 12],  // San Francisco -> Tokyo
+        [11, 13]  // Singapore -> Sydney
       ];
+
+      // Precompute 3D great-circle SLERP sample points for every arc once (32 steps for silky curves)
+      var ARC_STEPS = 32;
+      var precomputedArcsA = arcPairsA.map(function (pair, idx) {
+        var a = hubsA[pair[0]];
+        var b = hubsA[pair[1]];
+        var dot = Math.max(-0.9999, Math.min(0.9999, a.bx * b.bx + a.by * b.by + a.bz * b.bz));
+        var omega = Math.acos(dot);
+        var sinO = Math.sin(omega) || 1;
+        var liftMax = 0.14 + Math.min(0.18, omega * 0.11);
+        var pts = [];
+        for (var s = 0; s <= ARC_STEPS; s++) {
+          var t = s / ARC_STEPS;
+          var w0 = Math.sin((1 - t) * omega) / sinO;
+          var w1 = Math.sin(t * omega) / sinO;
+          var lift = 1 + Math.sin(t * Math.PI) * liftMax;
+          pts.push({
+            bx: (a.bx * w0 + b.bx * w1) * lift,
+            by: (a.by * w0 + b.by * w1) * lift,
+            bz: (a.bz * w0 + b.bz * w1) * lift
+          });
+        }
+        return { pts: pts, phaseOffset: (idx * 0.17) % 1, isHq: pair[0] === 0 };
+      });
+
       var rotYA = -1.1;
       var tiltXA = 0.24;
       var cxA = sizeA / 2;
       var cyA = sizeA / 2;
       var RA = 88;
+      var arcPacketPhase = 0;
 
+      // Pre-cache static gradients once (never recreate 4 gradients 60x/sec)
+      var glowGradA = null, sphereFillGradA = null, landGradA = null, rimShadeGradA = null;
       if (canvasA && ctxA) {
         canvasA.width = sizeA * dpr;
         canvasA.height = sizeA * dpr;
         ctxA.scale(dpr, dpr);
 
-        for (var lat = -70; lat <= 70; lat += 6) {
-          var stepLon = Math.max(6, Math.round(7 / Math.max(0.25, Math.cos((lat * Math.PI) / 180))));
-          for (var lon = -180; lon < 180; lon += stepLon) {
-            dotsA.push({
-              lat: (lat * Math.PI) / 180,
-              lon: (lon * Math.PI) / 180,
-              isLand: inContinent(lat, lon)
-            });
-          }
-        }
+        glowGradA = ctxA.createRadialGradient(cxA, cyA, RA * 0.72, cxA, cyA, RA * 1.18);
+        glowGradA.addColorStop(0, "rgba(25, 152, 220, 0.16)");
+        glowGradA.addColorStop(0.7, "rgba(1, 112, 186, 0.07)");
+        glowGradA.addColorStop(1, "rgba(1, 112, 186, 0)");
+
+        sphereFillGradA = ctxA.createRadialGradient(cxA - 26, cyA - 26, 8, cxA, cyA, RA);
+        sphereFillGradA.addColorStop(0, "#FFFFFF");
+        sphereFillGradA.addColorStop(0.55, "#E9F6FE");
+        sphereFillGradA.addColorStop(1, "#C7E8FC");
+
+        landGradA = ctxA.createLinearGradient(cxA - RA, cyA - RA, cxA + RA, cyA + RA);
+        landGradA.addColorStop(0, "rgba(25, 152, 220, 0.88)");
+        landGradA.addColorStop(0.55, "rgba(1, 112, 186, 0.90)");
+        landGradA.addColorStop(1, "rgba(12, 59, 117, 0.86)");
+
+        rimShadeGradA = ctxA.createRadialGradient(cxA - 28, cyA - 28, RA * 0.25, cxA, cyA, RA);
+        rimShadeGradA.addColorStop(0, "rgba(255, 255, 255, 0.22)");
+        rimShadeGradA.addColorStop(0.72, "rgba(255, 255, 255, 0)");
+        rimShadeGradA.addColorStop(1, "rgba(6, 24, 68, 0.18)");
+      }
+
+      var cosTiltA = Math.cos(tiltXA);
+      var sinTiltA = Math.sin(tiltXA);
+
+      function projectVec3A(bx, by, bz, sinY, cosY) {
+        var x1 = bx * cosY + bz * sinY;
+        var z1 = bz * cosY - bx * sinY;
+        var y2 = by * cosTiltA - z1 * sinTiltA;
+        var z2 = by * sinTiltA + z1 * cosTiltA;
+        return { x: cxA + x1 * RA, y: cyA + y2 * RA, z: z2, ux: x1, uy: y2 };
       }
 
       function project3DA(lat, lon, radius) {
@@ -505,232 +652,377 @@
         var x = radius * Math.cos(lat) * Math.sin(phi);
         var y = -radius * Math.sin(lat);
         var z = radius * Math.cos(lat) * Math.cos(phi);
-        var y2 = y * Math.cos(tiltXA) - z * Math.sin(tiltXA);
-        var z2 = y * Math.sin(tiltXA) + z * Math.cos(tiltXA);
+        var y2 = y * cosTiltA - z * sinTiltA;
+        var z2 = y * sinTiltA + z * cosTiltA;
         return { x: cxA + x, y: cyA + y2, z: z2 };
       }
-
-      // Cache globe geometry; rotation only needs one sine/cosine pair per frame.
-      dotsA.forEach(function (dot) {
-        dot.baseX = RA * Math.cos(dot.lat) * Math.sin(dot.lon);
-        dot.baseY = -RA * Math.sin(dot.lat);
-        dot.baseZ = RA * Math.cos(dot.lat) * Math.cos(dot.lon);
-      });
-      var dotBucketsA = Array.from({ length: 16 }, function () { return []; });
 
       function drawGlobeA() {
         if (!ctxA) return;
         ctxA.clearRect(0, 0, sizeA, sizeA);
 
-        var glow = ctxA.createRadialGradient(cxA, cyA, RA * 0.65, cxA, cyA, RA * 1.18);
-        glow.addColorStop(0, "rgba(25, 152, 220, 0.14)");
-        glow.addColorStop(0.7, "rgba(1, 112, 186, 0.06)");
-        glow.addColorStop(1, "rgba(1, 112, 186, 0)");
-        ctxA.fillStyle = glow;
+        // Soft outer atmospheric halo
+        ctxA.fillStyle = glowGradA;
         ctxA.beginPath();
         ctxA.arc(cxA, cyA, RA * 1.18, 0, Math.PI * 2);
         ctxA.fill();
 
-        var sphereFill = ctxA.createRadialGradient(cxA - 22, cyA - 22, 10, cxA, cyA, RA);
-        sphereFill.addColorStop(0, "rgba(255, 255, 255, 0.94)");
-        sphereFill.addColorStop(1, "rgba(224, 242, 254, 0.58)");
-        ctxA.fillStyle = sphereFill;
+        // Ocean sphere fill
+        ctxA.fillStyle = sphereFillGradA;
         ctxA.beginPath();
         ctxA.arc(cxA, cyA, RA, 0, Math.PI * 2);
         ctxA.fill();
 
-        ctxA.strokeStyle = "rgba(1, 112, 186, 0.22)";
-        ctxA.lineWidth = 1.1;
-        ctxA.stroke();
-
         var sinY = Math.sin(rotYA), cosY = Math.cos(rotYA);
-        var sinTilt = Math.sin(tiltXA), cosTilt = Math.cos(tiltXA);
-        dotBucketsA.forEach(function (bucket) { bucket.length = 0; });
-        for (var i = 0; i < dotsA.length; i++) {
-          var dot = dotsA[i];
-          var x = dot.baseX * cosY + dot.baseZ * sinY;
-          var z = dot.baseZ * cosY - dot.baseX * sinY;
-          var depth = dot.baseY * sinTilt + z * cosTilt;
-          if (depth < -12) continue;
-          var alpha = Math.max(0.08, (depth + 12) / (RA + 12));
-          var bucket = Math.min(7, Math.floor(alpha * 8)) + (dot.isLand ? 8 : 0);
-          dotBucketsA[bucket].push(cxA + x, cyA + dot.baseY * cosTilt - z * sinTilt);
-        }
-        dotBucketsA.forEach(function (points, index) {
-          if (!points.length) return;
-          var land = index >= 8, radius = land ? 1.5 : 0.95;
-          var alpha = ((index % 8 + 0.5) / 8) * (land ? 0.82 : 0.24);
-          ctxA.fillStyle = land ? 'rgba(1,112,186,' + alpha + ')' : 'rgba(25,152,220,' + alpha + ')';
+
+        ctxA.save();
+        ctxA.beginPath();
+        ctxA.arc(cxA, cyA, RA - 0.5, 0, Math.PI * 2);
+        ctxA.clip();
+
+        // Subtle latitude/longitude graticule lines for 3D depth
+        ctxA.strokeStyle = "rgba(1, 112, 186, 0.11)";
+        ctxA.lineWidth = 0.7;
+        for (var gLat = -60; gLat <= 60; gLat += 30) {
+          var latRad = gLat * DEG;
+          var started = false;
           ctxA.beginPath();
-          for (var point = 0; point < points.length; point += 2) {
-            ctxA.moveTo(points[point] + radius, points[point + 1]);
-            ctxA.arc(points[point], points[point + 1], radius, 0, Math.PI * 2);
-          }
-          ctxA.fill();
-        });
-
-        var hq = project3DA(hubsA[0].lat, hubsA[0].lon, RA);
-        if (hq.z > 0) {
-          for (var h = 1; h < hubsA.length; h++) {
-            var dest = project3DA(hubsA[h].lat, hubsA[h].lon, RA);
-            if (dest.z > -8) {
-              var midLat = (hubsA[0].lat + hubsA[h].lat) / 2;
-              var midLon = (hubsA[0].lon + hubsA[h].lon) / 2;
-              var ctrl = project3DA(midLat, midLon, RA * 1.24);
-              ctxA.strokeStyle = "rgba(1, 112, 186, 0.45)";
-              ctxA.lineWidth = 1.2;
-              ctxA.beginPath();
-              ctxA.moveTo(hq.x, hq.y);
-              ctxA.quadraticCurveTo(ctrl.x, ctrl.y, dest.x, dest.y);
-              ctxA.stroke();
-
-              ctxA.fillStyle = "#1998DC";
-              ctxA.beginPath();
-              ctxA.arc(dest.x, dest.y, 2.3, 0, Math.PI * 2);
-              ctxA.fill();
+          for (var gLon = -180; gLon <= 180; gLon += 12) {
+            var p = project3DA(latRad, gLon * DEG, RA);
+            if (p.z >= 0) {
+              if (!started) { ctxA.moveTo(p.x, p.y); started = true; }
+              else ctxA.lineTo(p.x, p.y);
+            } else {
+              started = false;
             }
           }
-          ctxA.fillStyle = "#0170BA";
+          ctxA.stroke();
+        }
+        for (var mLon = -180; mLon < 180; mLon += 30) {
+          var lonRad = mLon * DEG;
+          var mStarted = false;
           ctxA.beginPath();
-          ctxA.arc(hq.x, hq.y, 3.4, 0, Math.PI * 2);
+          for (var mLat = -80; mLat <= 80; mLat += 12) {
+            var mp = project3DA(mLat * DEG, lonRad, RA);
+            if (mp.z >= 0) {
+              if (!mStarted) { ctxA.moveTo(mp.x, mp.y); mStarted = true; }
+              else ctxA.lineTo(mp.x, mp.y);
+            } else {
+              mStarted = false;
+            }
+          }
+          ctxA.stroke();
+        }
+
+        // Crisp 3D-projected continents with smooth circular horizon-limb wrapping (zero chord/texture artifacts)
+        ctxA.fillStyle = landGradA;
+        ctxA.strokeStyle = "rgba(1, 90, 156, 0.38)";
+        ctxA.lineWidth = 0.7;
+        ctxA.lineJoin = "round";
+
+        function pushLimbArc(arr, x0, y0, x1, y1) {
+          var a0 = Math.atan2(y0, x0);
+          var a1 = Math.atan2(y1, x1);
+          var da = a1 - a0;
+          if (da > Math.PI) da -= Math.PI * 2;
+          else if (da < -Math.PI) da += Math.PI * 2;
+          var steps = Math.max(1, Math.ceil(Math.abs(da) / 0.12));
+          for (var s = 1; s <= steps; s++) {
+            var ang = a0 + (da * s) / steps;
+            arr.push([cxA + Math.cos(ang) * RA, cyA + Math.sin(ang) * RA]);
+          }
+        }
+
+        for (var rIdx = 0; rIdx < continentRings3D.length; rIdx++) {
+          var ring = continentRings3D[rIdx];
+          var n = ring.length;
+          if (n < 3) continue;
+          var proj = new Array(n);
+          var anyFront = false;
+          for (var vIdx = 0; vIdx < n; vIdx++) {
+            var v = ring[vIdx];
+            var x1 = v.bx * cosY + v.bz * sinY;
+            var z1 = v.bz * cosY - v.bx * sinY;
+            var y2 = v.by * cosTiltA - z1 * sinTiltA;
+            var z2 = v.by * sinTiltA + z1 * cosTiltA;
+            if (z2 > 0) anyFront = true;
+            proj[vIdx] = { x: x1, y: y2, z: z2 };
+          }
+          if (!anyFront) continue;
+
+          // Trace front-hemisphere vertices and wrap back-hemisphere segments cleanly along the outer horizon rim
+          var clipped = [];
+          var lastLimb = null;
+          for (var i = 0; i < n; i++) {
+            var curr = proj[i];
+            var next = proj[(i + 1) % n];
+            if (curr.z >= 0) {
+              clipped.push([cxA + curr.x * RA, cyA + curr.y * RA]);
+              lastLimb = null;
+            } else {
+              var cLen = Math.hypot(curr.x, curr.y);
+              if (cLen > 0.05) {
+                var lx = curr.x / cLen;
+                var ly = curr.y / cLen;
+                if (lastLimb) {
+                  pushLimbArc(clipped, lastLimb[0], lastLimb[1], lx, ly);
+                } else {
+                  clipped.push([cxA + lx * RA, cyA + ly * RA]);
+                }
+                lastLimb = [lx, ly];
+              }
+            }
+            if ((curr.z >= 0 && next.z < 0) || (curr.z < 0 && next.z >= 0)) {
+              var tEdge = curr.z / (curr.z - next.z);
+              var ix = curr.x + (next.x - curr.x) * tEdge;
+              var iy = curr.y + (next.y - curr.y) * tEdge;
+              var iLen = Math.hypot(ix, iy) || 1;
+              var nx = ix / iLen;
+              var ny = iy / iLen;
+              if (lastLimb) {
+                pushLimbArc(clipped, lastLimb[0], lastLimb[1], nx, ny);
+              } else {
+                clipped.push([cxA + nx * RA, cyA + ny * RA]);
+              }
+              lastLimb = next.z < 0 ? [nx, ny] : null;
+            }
+          }
+          if (clipped.length < 3) continue;
+          ctxA.beginPath();
+          ctxA.moveTo(clipped[0][0], clipped[0][1]);
+          for (var pIdx = 1; pIdx < clipped.length; pIdx++) {
+            ctxA.lineTo(clipped[pIdx][0], clipped[pIdx][1]);
+          }
+          ctxA.closePath();
           ctxA.fill();
+          ctxA.stroke();
+        }
+
+        // Subtle inner-rim 3D shading for realistic glass-sphere depth
+        ctxA.fillStyle = rimShadeGradA;
+        ctxA.beginPath();
+        ctxA.arc(cxA, cyA, RA, 0, Math.PI * 2);
+        ctxA.fill();
+        ctxA.restore();
+
+        // Crisp outer sphere border
+        ctxA.strokeStyle = "rgba(1, 112, 186, 0.30)";
+        ctxA.lineWidth = 1.25;
+        ctxA.beginPath();
+        ctxA.arc(cxA, cyA, RA, 0, Math.PI * 2);
+        ctxA.stroke();
+
+        // Draw all 18 3D SLERP global connection arcs (front-hemisphere segments always smoothly visible!)
+        ctxA.lineCap = "round";
+        for (var aIdx = 0; aIdx < precomputedArcsA.length; aIdx++) {
+          var arc = precomputedArcsA[aIdx];
+          var arcPts = arc.pts;
+          var segStarted = false;
+          ctxA.beginPath();
+          for (var s = 0; s < arcPts.length; s++) {
+            var sp = projectVec3A(arcPts[s].bx, arcPts[s].by, arcPts[s].bz, sinY, cosY);
+            if (sp.z > -0.06) {
+              if (!segStarted) { ctxA.moveTo(sp.x, sp.y); segStarted = true; }
+              else ctxA.lineTo(sp.x, sp.y);
+            } else {
+              segStarted = false;
+            }
+          }
+          ctxA.strokeStyle = arc.isHq ? "rgba(1, 112, 186, 0.62)" : "rgba(25, 152, 220, 0.44)";
+          ctxA.lineWidth = arc.isHq ? 1.3 : 1.0;
+          ctxA.stroke();
+
+          // Travelling glowing data packet with smooth sub-frame linear interpolation
+          var pktT = (arcPacketPhase + arc.phaseOffset) % 1;
+          var exactIdx = pktT * (arcPts.length - 1);
+          var idx0 = Math.min(arcPts.length - 2, Math.floor(exactIdx));
+          var frac = exactIdx - idx0;
+          var p0 = arcPts[idx0];
+          var p1 = arcPts[idx0 + 1];
+          var pktPt = projectVec3A(
+            p0.bx + (p1.bx - p0.bx) * frac,
+            p0.by + (p1.by - p0.by) * frac,
+            p0.bz + (p1.bz - p0.bz) * frac,
+            sinY,
+            cosY
+          );
+          if (pktPt.z > 0.05) {
+            var pktAlpha = Math.min(1, pktPt.z * 2.5);
+            ctxA.fillStyle = "rgba(56, 189, 248, " + (pktAlpha * 0.95).toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(pktPt.x, pktPt.y, arc.isHq ? 2.2 : 1.7, 0, Math.PI * 2);
+            ctxA.fill();
+          }
+        }
+
+        // Draw all 14 connected location pins with smooth horizon depth fade
+        for (var h = 0; h < hubsA.length; h++) {
+          var hub = hubsA[h];
+          var hp = projectVec3A(hub.bx, hub.by, hub.bz, sinY, cosY);
+          if (hp.z <= 0.02) continue;
+          var alpha = Math.min(1, hp.z * 3.0);
+          if (hub.main) {
+            // Pulsing Ahmedabad HQ beacon
+            var pulseR = 5.5 + Math.sin(arcPacketPhase * Math.PI * 4) * 2.2;
+            ctxA.fillStyle = "rgba(25, 152, 220, " + (0.28 * alpha).toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(hp.x, hp.y, pulseR, 0, Math.PI * 2);
+            ctxA.fill();
+
+            ctxA.fillStyle = "rgba(255, 255, 255, " + alpha.toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(hp.x, hp.y, 4.2, 0, Math.PI * 2);
+            ctxA.fill();
+
+            ctxA.fillStyle = "rgba(1, 112, 186, " + alpha.toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(hp.x, hp.y, 2.6, 0, Math.PI * 2);
+            ctxA.fill();
+          } else {
+            ctxA.fillStyle = "rgba(255, 255, 255, " + (0.9 * alpha).toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(hp.x, hp.y, 3.0, 0, Math.PI * 2);
+            ctxA.fill();
+
+            ctxA.fillStyle = "rgba(25, 152, 220, " + alpha.toFixed(2) + ")";
+            ctxA.beginPath();
+            ctxA.arc(hp.x, hp.y, 2.0, 0, Math.PI * 2);
+            ctxA.fill();
+          }
         }
       }
 
-      // --- Globe B: #cx-bento-lat-globe-canvas (99.9% Uptime SLA Card - image_45700b.png) ---
-      // Renders the exact stacked concentric latitude-ring dotted world dome on the right side
-      // of the Uptime SLA card and spins it smoothly at a medium-fast speed (~5.2s per rotation).
+      // --- Visual B: #cx-bento-lat-globe-canvas (99.9% Uptime SLA — Live System Telemetry & Node Network) ---
       var canvasB = document.getElementById("cx-bento-lat-globe-canvas");
       var ctxB = canvasB ? canvasB.getContext("2d") : null;
       var wB = 360;
       var hB = 270;
-      var cxB = 314;
-      var cyB = 258;
-      var RB = 226;
-      var tiltXB = 0.28; // 17.2 deg tilt matching the stacked latitude ellipses in image_45700b.png
-      var rotYB = 0.0;
-      var latRingsB = [];
+      var phaseB = 0;
 
       if (canvasB && ctxB) {
         canvasB.width = wB * dpr;
         canvasB.height = hB * dpr;
         ctxB.scale(dpr, dpr);
-
-        for (var latDeg = -14; latDeg <= 84; latDeg += 5.5) {
-          var latRad = (latDeg * Math.PI) / 180;
-          var ringDots = [];
-          var numDots = Math.max(24, Math.round(76 * Math.cos(latRad * 0.85)));
-          for (var j = 0; j < numDots; j++) {
-            var lonDeg = -180 + (360 * j) / numDots;
-            var lonRad = (lonDeg * Math.PI) / 180;
-            var land = inContinent(latDeg, lonDeg);
-            // Smooth longitudinal wave so rotational motion along the latitude ellipses is unmistakably visible
-            var wave = 0.5 + 0.5 * Math.sin(lonRad * 3.0 + latRad * 2.2);
-            ringDots.push({
-              lat: latRad,
-              lon: lonRad,
-              isLand: land,
-              wave: wave
-            });
-          }
-          latRingsB.push({ lat: latRad, dots: ringDots });
-        }
       }
 
-      function project3DB(lat, lon, radius) {
-        var phi = lon + rotYB;
-        var x = radius * Math.cos(lat) * Math.sin(phi);
-        var y = -radius * Math.sin(lat);
-        var z = radius * Math.cos(lat) * Math.cos(phi);
-        var y2 = y * Math.cos(tiltXB) - z * Math.sin(tiltXB);
-        var z2 = y * Math.sin(tiltXB) + z * Math.cos(tiltXB);
-        return { x: cxB + x, y: cyB + y2, z: z2 };
-      }
-
-      latRingsB.forEach(function (ring) {
-        ring.dots.forEach(function (dot) {
-          dot.baseX = RB * Math.cos(dot.lat) * Math.sin(dot.lon);
-          dot.baseY = -RB * Math.sin(dot.lat);
-          dot.baseZ = RB * Math.cos(dot.lat) * Math.cos(dot.lon);
-          dot.radius = 0.85 + 0.55 * dot.wave + (dot.isLand ? 0.25 : 0);
-        });
-      });
-      var dotBucketsB = Array.from({ length: 32 }, function () { return []; });
+      var nodesB = [
+        { x: 112, y: 174, r: 5.5, phase: 0.0 },
+        { x: 178, y: 122, r: 6.5, phase: 1.1 },
+        { x: 244, y: 158, r: 6.0, phase: 2.2 },
+        { x: 306, y: 116, r: 7.0, phase: 3.3 },
+        { x: 214, y: 214, r: 5.0, phase: 4.4 },
+        { x: 294, y: 204, r: 5.5, phase: 5.1 }
+      ];
+      var edgesB = [
+        [0, 1], [1, 2], [2, 3], [1, 4], [4, 2], [2, 5], [3, 5]
+      ];
 
       function drawGlobeB() {
         if (!ctxB) return;
         ctxB.clearRect(0, 0, wB, hB);
+        if (!prefersReduced) {
+          phaseB += 0.011; // Calm, smooth slower speed
+        }
 
-        // Subtle radial ambient glow under the dotted dome
-        var domeGlow = ctxB.createRadialGradient(cxB - 30, cyB - 40, RB * 0.2, cxB, cyB, RB * 1.05);
-        domeGlow.addColorStop(0, "rgba(25, 152, 220, 0.10)");
-        domeGlow.addColorStop(0.65, "rgba(1, 112, 186, 0.04)");
-        domeGlow.addColorStop(1, "rgba(25, 152, 220, 0)");
-        ctxB.fillStyle = domeGlow;
-        ctxB.beginPath();
-        ctxB.arc(cxB, cyB, RB * 1.05, 0, Math.PI * 2);
-        ctxB.fill();
-
-        var sinY = Math.sin(rotYB), cosY = Math.cos(rotYB);
-        var sinTilt = Math.sin(tiltXB), cosTilt = Math.cos(tiltXB);
-        dotBucketsB.forEach(function (bucket) { bucket.length = 0; });
-        latRingsB.forEach(function (ring) {
-          ring.dots.forEach(function (dot) {
-            var x = cxB + dot.baseX * cosY + dot.baseZ * sinY;
-            var z = dot.baseZ * cosY - dot.baseX * sinY;
-            var y = cyB + dot.baseY * cosTilt - z * sinTilt;
-            var depth = dot.baseY * sinTilt + z * cosTilt;
-            if (depth < -RB * 0.45 || x < -10 || x > wB + 10 || y < -10 || y > hB + 10) return;
-            var depthNorm = Math.max(0.12, Math.min(1, (depth + RB * 0.45) / (RB * 1.45)));
-            var alpha = depthNorm * (x < cxB ? 1.15 : 0.85) * (0.38 + 0.58 * dot.wave + (dot.isLand ? 0.18 : 0));
-            alpha = Math.max(0.14, Math.min(0.95, alpha));
-            var bucket = Math.min(15, Math.floor(alpha * 16)) + (dot.isLand ? 16 : 0);
-            dotBucketsB[bucket].push(x, y, dot.radius);
-          });
-        });
-        dotBucketsB.forEach(function (points, index) {
-          if (!points.length) return;
-          var alpha = (index % 16 + 0.5) / 16;
-          ctxB.fillStyle = index >= 16 ? 'rgba(1,112,186,' + alpha + ')' : 'rgba(25,152,220,' + alpha + ')';
+        // Subtle concentric SLA radar rings in bottom-right corner
+        var cxR = 296, cyR = 224;
+        for (var rIdx = 1; rIdx <= 4; rIdx++) {
+          var rad = 46 * rIdx + Math.sin(phaseB * 0.8 + rIdx) * 3;
           ctxB.beginPath();
-          for (var point = 0; point < points.length; point += 3) {
-            ctxB.moveTo(points[point] + points[point + 2], points[point + 1]);
-            ctxB.arc(points[point], points[point + 1], points[point + 2], 0, Math.PI * 2);
+          ctxB.arc(cxR, cyR, rad, Math.PI * 0.92, Math.PI * 1.98);
+          ctxB.strokeStyle = "rgba(1, 112, 186, " + (0.14 - rIdx * 0.025).toFixed(3) + ")";
+          ctxB.lineWidth = 1;
+          ctxB.stroke();
+        }
+
+        // Smooth dual-sine live uptime telemetry waveform
+        for (var wIdx = 0; wIdx < 2; wIdx++) {
+          ctxB.beginPath();
+          for (var x = 76; x <= wB; x += 4) {
+            var norm = (x - 76) / (wB - 76);
+            var amp = (wIdx === 0 ? 14 : 9) * (0.4 + 0.6 * Math.sin(norm * Math.PI));
+            var y =
+              (wIdx === 0 ? 186 : 196) +
+              Math.sin(norm * 6.5 - phaseB * (wIdx === 0 ? 1.1 : 0.75) + wIdx) * amp +
+              Math.cos(norm * 3.2 + phaseB * 0.5) * 4;
+            if (x === 76) ctxB.moveTo(x, y);
+            else ctxB.lineTo(x, y);
           }
+          ctxB.strokeStyle = wIdx === 0 ? "rgba(25, 152, 220, 0.36)" : "rgba(1, 112, 186, 0.16)";
+          ctxB.lineWidth = wIdx === 0 ? 1.8 : 1.2;
+          ctxB.stroke();
+        }
+
+        // Connected CodnestX system architecture edges + calm gliding signal packets
+        for (var eIdx = 0; eIdx < edgesB.length; eIdx++) {
+          var a = nodesB[edgesB[eIdx][0]];
+          var b = nodesB[edgesB[eIdx][1]];
+          ctxB.beginPath();
+          ctxB.moveTo(a.x, a.y);
+          ctxB.lineTo(b.x, b.y);
+          ctxB.strokeStyle = "rgba(1, 112, 186, 0.22)";
+          ctxB.lineWidth = 1.2;
+          ctxB.stroke();
+
+          var t = (phaseB * 0.26 + eIdx * 0.19) % 1;
+          var px = a.x + (b.x - a.x) * t;
+          var py = a.y + (b.y - a.y) * t;
+          ctxB.beginPath();
+          ctxB.arc(px, py, 2.3, 0, Math.PI * 2);
+          ctxB.fillStyle = "rgba(25, 152, 220, 0.88)";
           ctxB.fill();
-        });
+        }
+
+        // System nodes with calm breathing halos
+        for (var nIdx = 0; nIdx < nodesB.length; nIdx++) {
+          var nd = nodesB[nIdx];
+          var pulse = 0.5 + 0.5 * Math.sin(phaseB * 1.4 + nd.phase);
+          ctxB.beginPath();
+          ctxB.arc(nd.x, nd.y, nd.r + 5 + pulse * 4, 0, Math.PI * 2);
+          ctxB.fillStyle = "rgba(25, 152, 220, " + (0.06 + pulse * 0.08).toFixed(3) + ")";
+          ctxB.fill();
+
+          ctxB.beginPath();
+          ctxB.arc(nd.x, nd.y, nd.r, 0, Math.PI * 2);
+          ctxB.fillStyle = "#FFFFFF";
+          ctxB.fill();
+          ctxB.lineWidth = 1.8;
+          ctxB.strokeStyle = nIdx === 3 ? "#0170BA" : "#1998DC";
+          ctxB.stroke();
+
+          ctxB.beginPath();
+          ctxB.arc(nd.x, nd.y, 2.2, 0, Math.PI * 2);
+          ctxB.fillStyle = "#0170BA";
+          ctxB.fill();
+        }
       }
 
       drawGlobeA();
       drawGlobeB();
       if (prefersReduced) return;
 
-      var globeAVisible = !('IntersectionObserver' in window);
-      var globeBVisible = globeAVisible;
+      // Default visible so globes spin immediately and never stall in iframes/Canvas
+      var globeAVisible = true;
+      var globeBVisible = true;
       if ('IntersectionObserver' in window) {
         var globeObserver = new IntersectionObserver(function (entries) {
           entries.forEach(function (entry) {
             if (entry.target === canvasA) globeAVisible = entry.isIntersecting;
             if (entry.target === canvasB) globeBVisible = entry.isIntersecting;
           });
-        });
+        }, { rootMargin: "350px 0px" });
         if (canvasA) globeObserver.observe(canvasA);
         if (canvasB) globeObserver.observe(canvasB);
       }
-
-      // Medium-fast spin speed: ~5.2s per full revolution (1.21 rad/sec)
+// Medium-fast spin speed: ~5.2s per full revolution (1.21 rad/sec)
       var MEDIUM_FAST_SPEED_A = (Math.PI * 2) / 5.5;
       var MEDIUM_FAST_SPEED_B = (Math.PI * 2) / 4.6;
 
-      var globeFrameTime = 0;
       function tickGlobes(dtSec) {
-        if ((!globeAVisible && !globeBVisible) || document.hidden) { globeFrameTime = 0; return; }
-        globeFrameTime += dtSec;
-        if (globeFrameTime < 1 / 30) return;
-        dtSec = Math.min(globeFrameTime, 0.0667);
-        globeFrameTime = 0;
-        rotYA += MEDIUM_FAST_SPEED_A * dtSec;
-        rotYB += MEDIUM_FAST_SPEED_B * dtSec;
+        if ((!globeAVisible && !globeBVisible) || document.hidden) return;
+        var clampedDt = Math.min(dtSec, 0.05);
+        rotYA = (rotYA + MEDIUM_FAST_SPEED_A * clampedDt) % (Math.PI * 2);
+        arcPacketPhase = (arcPacketPhase + clampedDt * 0.34) % 1;
         if (globeAVisible) drawGlobeA();
         if (globeBVisible) drawGlobeB();
       }
@@ -752,146 +1044,7 @@
       }
     })();
 
-    // ==========================================================================
-    // 6. "PROBLEMS WE'VE SOLVED" BEFORE -> AFTER CAROUSEL & SVG CONNECTOR DRAW
-    // ==========================================================================
-    (function initBeforeAfterCarousel() {
-      var track = document.getElementById("cx-ba-track");
-      var viewport = document.getElementById("cx-ba-viewport");
-      if (!track || !viewport) return;
-
-      var slides = Array.from(track.querySelectorAll(".cx-ba-slide"));
-      var prevBtn = document.getElementById("cx-ba-prev");
-      var nextBtn = document.getElementById("cx-ba-next");
-      var currentNumEl = document.getElementById("cx-ba-current-num");
-      var activeIdx = 0;
-
-      function computeSlideConnectors(slideEl) {
-        var svg = slideEl.querySelector(".cx-ba-connector-svg");
-        var nodes = Array.from(slideEl.querySelectorAll(".cx-ba-before-node"));
-        var paths = Array.from(slideEl.querySelectorAll(".cx-ba-flow-path"));
-        var hub = slideEl.querySelector(".cx-ba-flow-hub");
-        if (!svg || !nodes.length || !paths.length) return;
-
-        var svgRect = svg.getBoundingClientRect();
-        if (svgRect.height < 20) return;
-        var w = 160;
-        var h = 320;
-        var hubY = h / 2;
-        if (hub) {
-          hub.setAttribute("cx", String(w - 6));
-          hub.setAttribute("cy", String(hubY));
-        }
-
-        nodes.forEach(function (nodeEl, i) {
-          var pathEl = paths[i];
-          if (!pathEl) return;
-          var nRect = nodeEl.getBoundingClientRect();
-          var relY = ((nRect.top + nRect.height / 2 - svgRect.top) / svgRect.height) * h;
-          relY = Math.max(16, Math.min(h - 16, relY));
-          var d = "M 0 " + relY.toFixed(1) + " C " + (w * 0.52).toFixed(1) + " " + relY.toFixed(1) + ", " + (w * 0.52).toFixed(1) + " " + hubY.toFixed(1) + ", " + (w - 6) + " " + hubY.toFixed(1);
-          pathEl.setAttribute("d", d);
-        });
-      }
-
-      function animateSlideEntrance(slideEl, dir) {
-        computeSlideConnectors(slideEl);
-        if (!hasGSAP || prefersReduced) return;
-        var g = window.gsap;
-        var paths = slideEl.querySelectorAll(".cx-ba-flow-path");
-        var nodes = slideEl.querySelectorAll(".cx-ba-before-node");
-        var metrics = slideEl.querySelectorAll(".cx-ba-metric-cell, .cx-ba-outcome-item");
-
-        g.fromTo(
-          nodes,
-          { opacity: 0, x: dir * 16 },
-          { opacity: 1, x: 0, duration: 0.48, ease: TOKENS.easeOut, stagger: 0.04, clearProps: "transform,opacity" }
-        );
-        g.fromTo(
-          paths,
-          { strokeDashoffset: 260 },
-          { strokeDashoffset: 0, duration: 0.68, delay: 0.12, ease: TOKENS.easeOut, stagger: 0.04 }
-        );
-        g.fromTo(
-          metrics,
-          { opacity: 0, y: 12 },
-          { opacity: 1, y: 0, duration: 0.48, delay: 0.18, ease: TOKENS.easeOut, stagger: 0.035, clearProps: "transform,opacity" }
-        );
-      }
-
-      function goToSlide(nextIndex, animate) {
-        var prevIdx = activeIdx;
-        activeIdx = (nextIndex + slides.length) % slides.length;
-        var dir = activeIdx >= prevIdx ? 1 : -1;
-
-        slides.forEach(function (sl, i) {
-          if (i === activeIdx) sl.classList.add("is-active");
-          else sl.classList.remove("is-active");
-        });
-
-        if (currentNumEl) {
-          currentNumEl.textContent = "0" + (activeIdx + 1);
-        }
-
-        var slideW = slides[0].offsetWidth;
-        var gap = 32;
-        var vpW = viewport.offsetWidth;
-        var centerOffset = Math.max(0, (vpW - slideW) / 2);
-        var targetX = -(activeIdx * (slideW + gap)) + centerOffset;
-
-        if (hasGSAP && animate && !prefersReduced) {
-          window.gsap.to(track, {
-            x: targetX,
-            duration: 0.68,
-            ease: TOKENS.easeOut
-          });
-          animateSlideEntrance(slides[activeIdx], dir);
-        } else {
-          track.style.transform = "translate3d(" + targetX.toFixed(1) + "px, 0, 0)";
-          computeSlideConnectors(slides[activeIdx]);
-        }
-      }
-
-      if (prevBtn) prevBtn.addEventListener("click", function () { goToSlide(activeIdx - 1, true); });
-      if (nextBtn) nextBtn.addEventListener("click", function () { goToSlide(activeIdx + 1, true); });
-
-      slides.forEach(function (sl, idx) {
-        sl.addEventListener("click", function () {
-          if (idx !== activeIdx) goToSlide(idx, true);
-        });
-      });
-
-      var baSec = document.getElementById("before-after-section");
-      if (baSec) {
-        baSec.addEventListener("keydown", function (e) {
-          if (e.key === "ArrowRight") goToSlide(activeIdx + 1, true);
-          if (e.key === "ArrowLeft") goToSlide(activeIdx - 1, true);
-        });
-      }
-
-      var dragStartX = 0;
-      var dragging = false;
-      viewport.addEventListener("pointerdown", function (e) {
-        if (e.target.closest("button")) return;
-        dragging = true;
-        dragStartX = e.clientX;
-      });
-      viewport.addEventListener("pointerup", function (e) {
-        if (!dragging) return;
-        dragging = false;
-        var dx = e.clientX - dragStartX;
-        if (dx < -45) goToSlide(activeIdx + 1, true);
-        else if (dx > 45) goToSlide(activeIdx - 1, true);
-      });
-
-      window.addEventListener("resize", function () {
-        goToSlide(activeIdx, false);
-      });
-
-      setTimeout(function () {
-        goToSlide(0, false);
-      }, 60);
-    })();
+    // Section 6 (BeforeAfterSlider) is now rendered by React in src/components/BeforeAfterSlider.jsx
 
     // ==========================================================================
     // 7. PORTFOLIO FILTERING WITH GSAP FLIP & SLIDING TAB PILL
@@ -945,39 +1098,7 @@
       });
     })();
 
-    // ==========================================================================
-    // 8. 9-STAGE DELIVERY FRAMEWORK SCROLL PROGRESS (Direct 1:1 with Lenis)
-    // ==========================================================================
-    (function initMethodProgress() {
-      var methodSec = document.getElementById("method-section");
-      var fillEl = document.getElementById("cx-method-progress-fill");
-      var stages = Array.from(document.querySelectorAll(".cx-method-stage"));
-      if (!methodSec || !stages.length) return;
-
-      stages[0].classList.add("is-active");
-
-      if (hasGSAP && hasST && !prefersReduced) {
-        window.ScrollTrigger.create({
-          trigger: methodSec,
-          start: "top 70%",
-          end: "bottom 45%",
-          onUpdate: function (self) {
-            var p = self.progress;
-            if (fillEl) {
-              fillEl.style.transform = "scaleX(" + Math.max(0.11, p).toFixed(3) + ")";
-            }
-            var activeCount = Math.max(1, Math.ceil(p * stages.length));
-            stages.forEach(function (st, idx) {
-              if (idx < activeCount) st.classList.add("is-active");
-              else st.classList.remove("is-active");
-            });
-          }
-        });
-      } else {
-        stages.forEach(function (st) { st.classList.add("is-active"); });
-        if (fillEl) fillEl.style.transform = "scaleX(1)";
-      }
-    })();
+    // Section 8 (BuildStage) is now rendered by React in src/components/BuildStage.jsx
 
     // ==========================================================================
     // 9. TESTIMONIALS CAROUSEL & UNIFIED CONTROLS
@@ -1154,7 +1275,7 @@
       if (!modalEl || !modalBox) return;
       lastFocusedEl = document.activeElement;
       modalOpen = true;
-      if (lenis) lenis.stop();
+      if (lenis && typeof lenis.stop === "function") lenis.stop();
 
       modalBadge.textContent = info.badge;
       modalTitle.textContent = info.title;
@@ -1211,14 +1332,14 @@
           ease: TOKENS.easeInOut,
           onComplete: function () {
             modalEl.classList.remove("is-open");
-            if (lenis && !mobileMenuOpen) lenis.start();
+            if (lenis && !mobileMenuOpen && typeof lenis.start === "function") lenis.start();
             if (lastFocusedEl && lastFocusedEl.focus) lastFocusedEl.focus();
           }
         });
       } else {
         modalEl.style.opacity = "0";
         modalEl.classList.remove("is-open");
-        if (lenis && !mobileMenuOpen) lenis.start();
+        if (lenis && !mobileMenuOpen && typeof lenis.start === "function") lenis.start();
         if (lastFocusedEl && lastFocusedEl.focus) lastFocusedEl.focus();
       }
     }
@@ -1352,36 +1473,68 @@
       }
     }
 
+    function safeInvertMatrix(m) {
+      if (!m) return null;
+      var det = m.a * m.d - m.b * m.c;
+      if (!det || !isFinite(det) || Math.abs(det) < 1e-7) return null;
+      try { return m.inverse(); } catch (e) { return null; }
+    }
+    function safeGetBBox(el) {
+      try { return el && typeof el.getBBox === "function" ? el.getBBox() : null; } catch (e) { return null; }
+    }
+    function safeGetCTM(el) {
+      try { return el && typeof el.getCTM === "function" ? el.getCTM() : null; } catch (e) { return null; }
+    }
     // Align the visual icon layers without moving their separately rendered text layers.
     function alignWorkflowOrbit(svg) {
-      var orbit = svg && svg._cxWorkflowOrbit;
-      if (!orbit || !svg.getCTM()) return;
-      var ns = "http://www.w3.org/2000/svg", rootInverse = svg.getCTM().inverse();
-      svg.querySelectorAll(".cx-workflow-orbit-icon").forEach(function (icon) {
-        if (!icon._cxOrbitCenter) {
-          var box = icon.getBBox();
-          if (!box.width || !box.height) return;
-          icon._cxOrbitCenter = new DOMPoint(box.x + box.width / 2, box.y + box.height / 2);
-        }
-        var wrapper = icon.parentElement;
-        if (!wrapper.classList.contains("cx-workflow-icon-orbit-position")) {
-          wrapper = document.createElementNS(ns, "g"); wrapper.setAttribute("class", "cx-workflow-icon-orbit-position");
-          icon.parentElement.insertBefore(wrapper, icon); wrapper.appendChild(icon);
-        }
-        var parentMatrix = rootInverse.multiply(wrapper.parentElement.getCTM());
-        var transform = icon.transform.baseVal.consolidate();
-        var localCenter = icon._cxOrbitCenter.matrixTransform(transform ? transform.matrix : new DOMMatrix());
-        var originalCenter = localCenter.matrixTransform(parentMatrix);
-        var dx = originalCenter.x - orbit.reference.x, dy = originalCenter.y - orbit.reference.y;
-        var distance = Math.hypot(dx, dy);
-        if (!distance) return;
-        var target = new DOMPoint(orbit.center.x + dx / distance * orbit.radius, orbit.center.y + dy / distance * orbit.radius).matrixTransform(parentMatrix.inverse());
-        wrapper.setAttribute("transform", "translate(" + (target.x - localCenter.x).toFixed(5) + " " + (target.y - localCenter.y).toFixed(5) + ")");
-      });
+      try {
+        var orbit = svg && svg._cxWorkflowOrbit;
+        var rootCTM = safeGetCTM(svg);
+        var rootInverse = safeInvertMatrix(rootCTM);
+        if (!orbit || !rootInverse) return;
+        var ns = "http://www.w3.org/2000/svg";
+        var orbitIcons = svg._cxOrbitIcons || (svg._cxOrbitIcons = Array.prototype.slice.call(svg.querySelectorAll(".cx-workflow-orbit-icon")));
+        orbitIcons.forEach(function (icon) {
+          try {
+            if (!icon._cxOrbitCenter) {
+              var box = safeGetBBox(icon);
+              if (!box || !box.width || !box.height) return;
+              icon._cxOrbitCenter = new DOMPoint(box.x + box.width / 2, box.y + box.height / 2);
+            }
+            var wrapper = icon.parentElement;
+            if (!wrapper) return;
+            if (!wrapper.classList.contains("cx-workflow-icon-orbit-position")) {
+              wrapper = document.createElementNS(ns, "g");
+              wrapper.setAttribute("class", "cx-workflow-icon-orbit-position");
+              icon.parentElement.insertBefore(wrapper, icon);
+              wrapper.appendChild(icon);
+            }
+            var pCTM = safeGetCTM(wrapper.parentElement);
+            if (!pCTM) return;
+            var parentMatrix = rootInverse.multiply(pCTM);
+            var parentInverse = safeInvertMatrix(parentMatrix);
+            if (!parentInverse) return;
+            var transform = icon.transform && icon.transform.baseVal ? icon.transform.baseVal.consolidate() : null;
+            var localCenter = icon._cxOrbitCenter.matrixTransform(transform ? transform.matrix : new DOMMatrix());
+            var originalCenter = localCenter.matrixTransform(parentMatrix);
+            var dx = originalCenter.x - orbit.reference.x, dy = originalCenter.y - orbit.reference.y;
+            var distance = Math.hypot(dx, dy);
+            if (!distance) return;
+            var target = new DOMPoint(
+              orbit.center.x + dx / distance * orbit.radius,
+              orbit.center.y + dy / distance * orbit.radius
+            ).matrixTransform(parentInverse);
+            if (!isFinite(target.x) || !isFinite(target.y)) return;
+            wrapper.setAttribute("transform", "translate(" + (target.x - localCenter.x).toFixed(5) + " " + (target.y - localCenter.y).toFixed(5) + ")");
+          } catch (e) {}
+        });
+      } catch (e) {}
     }
     // Keep the authored text layout and transitions; use actual font text in its SVG.
     function applyWorkflowTextTheme(svg) {
+      try {
       if (!svg) return;
+      try {
       // Crop unused animation canvas space without changing any artwork coordinates.
       var desktopCanvas = svg.viewBox.baseVal.width === 1920;
       var croppedViewBox = desktopCanvas ? "0 140 1920 1120" : "0 60 1080 1860";
@@ -1419,10 +1572,16 @@
       svg.querySelectorAll("g[aria-label]").forEach(function (group) {
         if (group.dataset.nativeText || !group.querySelector("text")) return;
         var size = parseFloat(group.getAttribute("font-size")) || 24;
-        var box = group.getBBox();
+        var box = safeGetBBox(group);
+        if (!box) return;
+        var isHeading = group.classList.contains("cx-workflow-native-heading") || size >= 52;
+        var scaledSize = isHeading ? Math.round(size * 1.18) : (size >= 26 ? Math.round(size * 1.16) : Math.round(size * 1.12));
         var text = document.createElementNS("http://www.w3.org/2000/svg", "text");
         text.setAttribute("x", String(box.x)); text.setAttribute("y", "0");
-        if (group.classList.contains("cx-workflow-native-heading")) text.setAttribute("font-weight", "600");
+        text.setAttribute("font-family", isHeading ? "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif" : "'Inter', -apple-system, BlinkMacSystemFont, sans-serif");
+        text.setAttribute("font-size", String(scaledSize));
+        text.setAttribute("font-weight", isHeading ? "700" : "600");
+        text.setAttribute("letter-spacing", isHeading ? "-0.025em" : "-0.01em");
         group.getAttribute("aria-label").trim().split(/[\r\n]+/).forEach(function (line, index) {
           var span = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
           span.setAttribute("x", String(box.x));
@@ -1445,15 +1604,21 @@
         var fill = "url(#" + gradientId + ")";
         if (text.getAttribute("fill") !== fill) text.setAttribute("fill", fill);
       });
+      } catch (e) {}
+    
+      } catch (e) {}
     }
     function prepareFrozenWorkflow(svg) {
+      try {
       if (!svg || svg.dataset.nativeWorkflow) return;
+      try {
       svg.dataset.nativeWorkflow = "true";
       var ns = "http://www.w3.org/2000/svg";
       svg.querySelectorAll("g[aria-label]").forEach(function (group) {
         var value = group.getAttribute("aria-label");
         var size = parseFloat(group.getAttribute("font-size")) || 24;
-        var box = group.getBBox();
+        var box = safeGetBBox(group);
+        if (!box) return;
         var text = document.createElementNS(ns, "text");
         text.setAttribute("font-family", "Inter, sans-serif"); text.setAttribute("font-size", String(size));
         text.setAttribute("font-weight", "500"); text.setAttribute("x", String(box.x)); text.setAttribute("y", "0");
@@ -1478,20 +1643,26 @@
       var globe = svg.querySelector("image[width='775px']");
       if (globe) {
         var globeLayer = globe.parentElement, parent = globeLayer.parentElement;
-        var matrix = parent.getCTM().inverse().multiply(globe.getCTM());
+        var pCtm = safeGetCTM(parent), gCtm = safeGetCTM(globe);
+        if (pCtm && gCtm) {
+        var matrix = pCtm.inverse().multiply(gCtm);
         var center = new DOMPoint(387.5, 382.5).matrixTransform(matrix);
         var wrap = document.createElementNS(ns, "g"); wrap.setAttribute("class", "cx-workflow-scaled-globe");
         var globeScale = 800 / (775 * Math.hypot(matrix.a, matrix.b));
         wrap.setAttribute("transform", "matrix(" + globeScale + " 0 0 " + globeScale + " " + (-center.x * globeScale) + " " + (center.y * (1 - globeScale)) + ")");
         parent.insertBefore(wrap, globeLayer); wrap.appendChild(globeLayer);
+        }
       }
       var artRoot = svg.querySelector("g[clip-path]");
       if (artRoot) Array.from(artRoot.children).forEach(function (layer) {
         if (layer.tagName !== "g" || layer.querySelector("[aria-label], image")) return;
-        var box = layer.getBBox();
-        if (box.width > 0 && box.width < 300 && box.height > 0 && box.height < 300) layer.classList.add("cx-workflow-orbit-icon");
+        var box = safeGetBBox(layer);
+        if (box && box.width > 0 && box.width < 300 && box.height > 0 && box.height < 300) layer.classList.add("cx-workflow-orbit-icon");
       });
       applyWorkflowTextTheme(svg);
+      } catch (e) {}
+    
+      } catch (e) {}
     }
 
     var lottieWrapper = document.querySelector(".cx-lottie-stage");
@@ -1499,8 +1670,9 @@
       var lottieInner = lottieWrapper.firstElementChild;
       var frozenSvg = lottieInner ? lottieInner.querySelector("svg") : null;
       if (lottieInner && frozenSvg) {
-        var DESKTOP_JSON = import.meta.env.BASE_URL + "animations/workflow-desktop.json";
-        var MOBILE_JSON = import.meta.env.BASE_URL + "animations/workflow-mobile.json";
+        var __cxBase = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.BASE_URL) ? import.meta.env.BASE_URL : ((typeof window !== "undefined" && window.__CX_BASE_URL) ? window.__CX_BASE_URL : "/");
+        var DESKTOP_JSON = __cxBase + "animations/workflow-desktop.json";
+        var MOBILE_JSON = __cxBase + "animations/workflow-mobile.json";
         var currentMode = null;
         var currentAnim = null;
         var mountEl = null;
@@ -1647,6 +1819,7 @@
 
         function rethemeLottieJson(animData) {
           if (!animData || typeof animData !== "object") return animData;
+          /* Restored native Step 1-5 Lottie text & pill layers */
           if (Array.isArray(animData.assets)) {
             var imgIdx = 0;
             animData.assets.forEach(function (asset) {
@@ -1663,6 +1836,61 @@
           }
           walkAndRethemeLottieData(animData.layers);
           walkAndRethemeLottieData(animData.assets);
+          // Sync smaller orbiting orbs ("Null 1" + "icon 1..5") linearly to scroll scrub range (0..160deg)
+          // Eliminates stepped hold/snap keyframes so smaller orbs glide smoothly with scrolling
+          try {
+            if (Array.isArray(animData.layers)) {
+              var ip = typeof animData.ip === "number" ? animData.ip : 59;
+              var op = typeof animData.op === "number" ? animData.op : 680;
+              var totalF = Math.max(1, (op - ip) - 1);
+              var isDesk = (animData.w || 1920) >= 1200;
+              var tStart = ip + (isDesk ? Math.min(30, totalF * 0.08) : 0);
+              var tEnd = ip + (isDesk ? Math.min(totalF, 596) : Math.min(totalF, 544));
+              var tSpan = Math.max(1, tEnd - tStart);
+              var linIn = { x: [1], y: [1] };
+              var linOut = { x: [0], y: [0] };
+
+              animData.layers.forEach(function (lay) {
+                if (!lay || !lay.ks) return;
+                if (lay.nm === "Null 1" && lay.ks.r) {
+                  lay.ks.r = {
+                    a: 1,
+                    k: [
+                      { i: linIn, o: linOut, t: 0, s: [0] },
+                      { i: linIn, o: linOut, t: tStart, s: [0] },
+                      { i: linIn, o: linOut, t: tEnd, s: [160] },
+                      { t: op + 100, s: [160] }
+                    ],
+                    ix: 10
+                  };
+                }
+                var mIcon = typeof lay.nm === "string" ? lay.nm.match(/^icon\s*([1-5])$/i) : null;
+                if (mIcon && lay.ks.o) {
+                  var idx = parseInt(mIcon[1], 10) - 1; // 0..4
+                  var centerP = idx * 0.25; // 0, 0.25, 0.5, 0.75, 1.0
+                  var tc = tStart + centerP * tSpan;
+                  var step = 0.25 * tSpan;
+                  var keys = [];
+                  if (tc - 2 * step > 0) {
+                    keys.push({ i: linIn, o: linOut, t: Math.max(0, tc - 2 * step), s: [0] });
+                  }
+                  if (idx > 0) {
+                    keys.push({ i: linIn, o: linOut, t: Math.max(0, tc - step), s: [52] });
+                  } else {
+                    keys.push({ i: linIn, o: linOut, t: 0, s: [100] });
+                  }
+                  keys.push({ i: linIn, o: linOut, t: tc, s: [100] });
+                  if (idx < 4) {
+                    keys.push({ i: linIn, o: linOut, t: tc + step, s: [52] });
+                    keys.push({ t: Math.min(op + 100, tc + 2 * step), s: [0] });
+                  } else {
+                    keys.push({ t: op + 100, s: [100] });
+                  }
+                  lay.ks.o = { a: 1, k: keys, ix: 11 };
+                }
+              });
+            }
+          } catch (e) {}
           return animData;
         }
 
@@ -1679,6 +1907,7 @@
         }
 
         function enforceMountedSvgTheme(container) {
+      try {
           if (!container) return;
           applyWorkflowTextTheme(container.querySelector("svg"));
           var imgs = container.querySelectorAll("image");
@@ -1709,19 +1938,260 @@
               if (nsc !== sc) el.setAttribute("stop-color", nsc);
             }
           });
+        
+      } catch (e) {}
+    }
+
+        
+        var CX_WF_STAGES = [
+          {
+            badge: "Ready in 1 Week",
+            title: "Idea to",
+            accent: "Impact",
+            desc: "Transform your vision into a functional AI-driven concept with our end-to-end validation and prototyping approach.",
+            pills: ["Business Insight Gathering", "Generative AI Brainstorming", "Agile Development & Iteration", "Rapid Prototyping", "Validation & Feasibility Analysis"]
+          },
+          {
+            badge: "Ready in 1 Week",
+            title: "Design &",
+            accent: "UX Strategy",
+            desc: "Design That Converts – Create visually appealing, intuitive, and user-friendly experiences.",
+            pills: ["Brand Consistency", "AI-Powered Wireframing", "User Behavior Analysis", "Adaptive UX Optimization", "Modern Design Tool Leverage"]
+          },
+          {
+            badge: "Ready Within 4 Weeks",
+            title: "MVP",
+            accent: "Development",
+            desc: "Develop a fully functional, market-ready MVP software with AI-powered capabilities.",
+            pills: ["Experimental Lab Solutions", "Core Feature Selection", "AI-Enhanced Prototyping", "Automated Development", "Data-Driven Refinement", "Intelligent Testing"]
+          },
+          {
+            badge: "Tailored As Per Business Needs",
+            title: "GTM & Market",
+            accent: "Scaling",
+            desc: "Accelerate market entry and maximize visibility through tailored, AI-powered GTM and digital marketing strategies.",
+            pills: ["Customer Personas", "AI-Powered Market Research", "Sales Channel Strategy", "Content & SEO Optimization", "Smart Analytics", "Performance Tracking"]
+          },
+          {
+            badge: "As Per Product Needs",
+            title: "Product",
+            accent: "Maintenance",
+            desc: "Keeping your products running smoothly with continuous improvements and AI-driven optimizations.",
+            pills: ["Quality Assurance and Testing", "Performance Monitoring", "Bug Fixes & Security", "Feature Enhancements", "User Support", "Continuous Optimization"]
+          }
+        ];
+
+        var wfOverlayEl = lottieWrapper.querySelector(".cx-wf-live-panel");
+        if (!wfOverlayEl) {
+          wfOverlayEl = document.createElement("div");
+          wfOverlayEl.className = "cx-wf-live-panel";
+          wfOverlayEl.setAttribute("aria-live", "polite");
+          lottieWrapper.appendChild(wfOverlayEl);
+        }
+        var lastWfStageIdx = -1;
+        var cachedWfPillEls = [];
+        var cachedWfCardEl = null;
+        var cachedWfBadgeEl = null;
+        var cachedWfTitleEl = null;
+        var cachedWfDescEl = null;
+
+        function easeOutCubic(x) {
+          var c = Math.max(0, Math.min(1, x));
+          return 1 - Math.pow(1 - c, 3);
         }
 
-        if ("IntersectionObserver" in window) {
-          var lottieObs = new IntersectionObserver(function (entries) {
-            entries.forEach(function (entry) {
-              isLottieInView = entry.isIntersecting;
-              if (currentAnim) {
-                if (isLottieInView) currentAnim.play();
-                else currentAnim.pause();
+        function renderWfStage(stageIdx, stageLocalProgress) {
+          var clamped = Math.max(0, Math.min(CX_WF_STAGES.length - 1, stageIdx));
+          var lp = typeof stageLocalProgress === "number" ? Math.max(0, Math.min(1, stageLocalProgress)) : 1;
+
+          if (clamped !== lastWfStageIdx || wfOverlayEl.children.length === 0) {
+            lastWfStageIdx = clamped;
+            var st = CX_WF_STAGES[clamped];
+            var pillsHtml = st.pills.map(function (p) {
+              return '<span class="cx-wf-live-pill">' + p + '</span>';
+            }).join("");
+            wfOverlayEl.style.opacity = "1";
+            wfOverlayEl.style.visibility = "visible";
+            wfOverlayEl.innerHTML =
+              '<div class="cx-wf-live-card">' +
+                '<div class="cx-wf-live-badge">' + st.badge + '</div>' +
+                '<h3 class="cx-wf-live-title">' + st.title + ' <span class="cx-wf-live-accent">' + st.accent + '</span></h3>' +
+                '<p class="cx-wf-live-desc">' + st.desc + '</p>' +
+                '<div class="cx-wf-live-pills">' + pillsHtml + '</div>' +
+              '</div>';
+            cachedWfCardEl = wfOverlayEl.querySelector(".cx-wf-live-card");
+            cachedWfBadgeEl = wfOverlayEl.querySelector(".cx-wf-live-badge");
+            cachedWfTitleEl = wfOverlayEl.querySelector(".cx-wf-live-title");
+            cachedWfDescEl = wfOverlayEl.querySelector(".cx-wf-live-desc");
+            cachedWfPillEls = Array.prototype.slice.call(wfOverlayEl.querySelectorAll(".cx-wf-live-pill"));
+          }
+
+          // Smooth exit handoff near end of non-final stages so next stage enters cleanly
+          var exitFactor = 1;
+          var exitLiftY = 0;
+          if (clamped < CX_WF_STAGES.length - 1 && lp > 0.88) {
+            var exT = easeOutCubic((lp - 0.88) / 0.12);
+            exitFactor = 1 - exT * 0.82;
+            exitLiftY = -14 * exT;
+          }
+
+          if (cachedWfCardEl) {
+            cachedWfCardEl.style.opacity = exitFactor.toFixed(3);
+            cachedWfCardEl.style.transform = "translate3d(0," + exitLiftY.toFixed(2) + "px,0)";
+          }
+
+          // 1) Progressive Badge reveal (0.00 -> 0.14)
+          if (cachedWfBadgeEl) {
+            var bRaw = clamped === 0 ? Math.max(0.92, lp / 0.10) : (lp / 0.14);
+            var bE = easeOutCubic(bRaw);
+            cachedWfBadgeEl.style.opacity = bE.toFixed(3);
+            cachedWfBadgeEl.style.transform = "translate3d(0," + ((1 - bE) * 20).toFixed(2) + "px,0)";
+          }
+
+          // 2) Progressive Heading reveal (0.05 -> 0.24)
+          if (cachedWfTitleEl) {
+            var tRaw = clamped === 0 ? Math.max(0.28, (lp - 0.01) / 0.18) : ((lp - 0.05) / 0.19);
+            var tE = easeOutCubic(tRaw);
+            cachedWfTitleEl.style.opacity = tE.toFixed(3);
+            cachedWfTitleEl.style.transform = "translate3d(0," + ((1 - tE) * 28).toFixed(2) + "px,0) scale(" + (0.975 + 0.025 * tE).toFixed(3) + ")";
+          }
+
+          // 3) Progressive Description reveal (0.14 -> 0.34)
+          if (cachedWfDescEl) {
+            var dRaw = clamped === 0 ? ((lp - 0.07) / 0.20) : ((lp - 0.14) / 0.20);
+            var dE = easeOutCubic(dRaw);
+            cachedWfDescEl.style.opacity = dE.toFixed(3);
+            cachedWfDescEl.style.transform = "translate3d(0," + ((1 - dE) * 24).toFixed(2) + "px,0)";
+          }
+
+          // 4) Progressive Blue Pills reveal sequentially (0.24 -> 0.80)
+          var count = cachedWfPillEls.length;
+          if (count > 0) {
+            var spanStart = clamped === 0 ? 0.18 : 0.24;
+            var spanEnd = 0.80;
+            var stepSpan = (spanEnd - spanStart) / count;
+            var pillFadeWindow = Math.max(0.11, stepSpan * 1.15);
+            for (var i = 0; i < count; i++) {
+              var pStart = spanStart + i * stepSpan;
+              var pE = easeOutCubic((lp - pStart) / pillFadeWindow);
+              var el = cachedWfPillEls[i];
+              el.style.opacity = pE.toFixed(3);
+              el.style.transform = "translate3d(0," + ((1 - pE) * 18).toFixed(2) + "px,0) scale(" + (0.92 + 0.08 * pE).toFixed(3) + ")";
+            }
+          }
+        }
+
+        function syncWorkflowVisualsFromProgress(progress) {
+          var p = Math.max(0, Math.min(1, progress));
+          var totalStages = CX_WF_STAGES.length;
+          var scaled = p * totalStages;
+          var stageIdx = Math.min(totalStages - 1, Math.floor(scaled));
+          var localP = stageIdx === totalStages - 1
+            ? Math.min(1, scaled - stageIdx)
+            : (scaled - stageIdx);
+          if (p >= 0.995) localP = 1;
+          renderWfStage(stageIdx, localP);
+        }
+        renderWfStage(0, 0.0);
+
+        var workflowST = null;
+        var workflowLerpRaf = null;
+
+        function applyProgressivePills(svg, progress) {
+          syncWorkflowVisualsFromProgress(progress);
+        }
+
+        function bindWorkflowScrollScrub(anim, isDesktopAnim) {
+          if (!anim || !hasGSAP || !hasST || prefersReduced) return;
+          if (workflowST) {
+            try { workflowST.kill(); } catch (e) {}
+            workflowST = null;
+          }
+          if (workflowLerpRaf) {
+            cancelAnimationFrame(workflowLerpRaf);
+            workflowLerpRaf = null;
+          }
+          // Unlock smooth sub-frame interpolation for buttery 60/120fps scrubbing
+          try { if (typeof anim.setSubframe === "function") anim.setSubframe(true); } catch (e) {}
+
+          var totalFrames = Math.max(1, (anim.totalFrames || (isDesktopAnim ? 621 : 557)) - 1);
+          var startFrame = isDesktopAnim ? Math.min(30, totalFrames * 0.08) : 0;
+          var endFrame = isDesktopAnim ? Math.min(totalFrames, 596) : Math.min(totalFrames, 544);
+          var spanFrames = Math.max(1, endFrame - startFrame);
+          var sectionEl = document.getElementById("ai-engine-section") || lottieWrapper.closest("section") || lottieWrapper;
+          var isDesktopView = window.innerWidth >= 769;
+
+          var targetFrame = startFrame;
+          var drawnFrame = startFrame;
+          var lastTickTs = 0;
+
+          try {
+            anim.goToAndStop(startFrame, true);
+            syncWorkflowVisualsFromProgress(0);
+          } catch (e) {}
+
+          function tickSmoothFrame(now) {
+            if (!currentAnim) { workflowLerpRaf = null; lastTickTs = 0; return; }
+            var dt = lastTickTs ? Math.min(0.05, Math.max(0.004, (now - lastTickTs) / 1000)) : 0.0167;
+            lastTickTs = now;
+            var diff = targetFrame - drawnFrame;
+            if (Math.abs(diff) > 0.02) {
+              // Delta-time normalized snappy catch-up so orb and data stay 100% locked with zero lag
+              var factor = 1 - Math.exp(-18 * dt);
+              drawnFrame += diff * factor;
+              var renderedProgress = Math.max(0, Math.min(1, (drawnFrame - startFrame) / spanFrames));
+              try {
+                currentAnim.goToAndStop(drawnFrame, true);
+              } catch (e) {}
+              syncWorkflowVisualsFromProgress(renderedProgress);
+              workflowLerpRaf = requestAnimationFrame(tickSmoothFrame);
+            } else {
+              drawnFrame = targetFrame;
+              var finalProgress = Math.max(0, Math.min(1, (drawnFrame - startFrame) / spanFrames));
+              try {
+                currentAnim.goToAndStop(drawnFrame, true);
+              } catch (e) {}
+              syncWorkflowVisualsFromProgress(finalProgress);
+              workflowLerpRaf = null;
+              lastTickTs = 0;
+            }
+          }
+
+          workflowST = window.ScrollTrigger.create({
+            trigger: isDesktopView ? sectionEl : lottieWrapper,
+            start: isDesktopView ? "top top" : "top 80%",
+            end: isDesktopView ? "+=520%" : "bottom 20%",
+            pin: isDesktopView ? sectionEl : false,
+            pinSpacing: isDesktopView,
+            anticipatePin: 1,
+            scrub: true,
+            invalidateOnRefresh: true,
+            onUpdate: function (self) {
+              if (!currentAnim) return;
+              targetFrame = startFrame + self.progress * spanFrames;
+              if (!workflowLerpRaf) {
+                lastTickTs = 0;
+                workflowLerpRaf = requestAnimationFrame(tickSmoothFrame);
               }
-            });
-          }, { rootMargin: "150px" });
-          lottieObs.observe(lottieWrapper);
+            }
+          });
+        }
+
+        // Also scrub frozenSvg orb on scroll as fallback if lottie-web CDN is unavailable
+        if (frozenOrbImg && hasGSAP && hasST && !prefersReduced) {
+          var fallbackSection = document.getElementById("ai-engine-section") || lottieWrapper;
+          window.ScrollTrigger.create({
+            trigger: fallbackSection,
+            start: "top bottom",
+            end: "bottom top",
+            scrub: true,
+            onUpdate: function (self) {
+              if (frozenSvg.style.display === "none") return;
+              var deg = self.progress * 360;
+              frozenOrbImg.setAttribute("transform", "rotate(" + deg.toFixed(2) + " 387.5 382.5)");
+              syncWorkflowVisualsFromProgress(self.progress);
+            }
+          });
         }
 
         var mountLottie = function () {
@@ -1731,8 +2201,12 @@
           if (currentMode === nextMode && currentAnim) return;
           currentMode = nextMode;
 
+          if (workflowST) {
+            try { workflowST.kill(); } catch (e) {}
+            workflowST = null;
+          }
           if (currentAnim) {
-            currentAnim.destroy();
+            try { currentAnim.destroy(); } catch (e) {}
             currentAnim = null;
           }
           if (mountEl) mountEl.remove();
@@ -1745,16 +2219,23 @@
           var targetUrl = isDesktop ? DESKTOP_JSON : MOBILE_JSON;
 
           function initWithConfig(cfg) {
+            cfg.autoplay = false;
+            cfg.loop = false;
+            cfg.rendererSettings = Object.assign({}, cfg.rendererSettings, { preserveAspectRatio: "xMinYMid meet" });
             currentAnim = window.lottie.loadAnimation(cfg);
             currentAnim.addEventListener("DOMLoaded", function () {
               enforceMountedSvgTheme(mountEl);
+              try {
+                var lSvg = mountEl.querySelector("svg");
+                if (lSvg) {
+                  lSvg.querySelectorAll("filter").forEach(function (f) { f.remove(); });
+                  lSvg.querySelectorAll("[filter]").forEach(function (el) { el.removeAttribute("filter"); });
+                }
+              } catch (e) {}
               frozenSvg.style.display = "none";
-              if (!isLottieInView) currentAnim.pause();
-              if ("MutationObserver" in window && mountEl) {
-                var mo = new MutationObserver(function () {
-                  enforceMountedSvgTheme(mountEl);
-                });
-                mo.observe(mountEl, { attributes: true, subtree: true, attributeFilter: ["fill", "stroke", "href", "xlink:href"] });
+              bindWorkflowScrollScrub(currentAnim, isDesktop);
+              if (hasST) {
+                try { window.ScrollTrigger.refresh(); } catch (e) {}
               }
             });
             currentAnim.addEventListener("drawnFrame", function () {
@@ -1767,7 +2248,26 @@
             });
           }
 
-          if (typeof window.fetch === "function") {
+          var preloadedData = (typeof window !== "undefined")
+            ? (isDesktop ? (window.__CX_WORKFLOW_DESKTOP_JSON || window.__CX_WORKFLOW_DESKTOP_JSON__) : (window.__CX_WORKFLOW_MOBILE_JSON || window.__CX_WORKFLOW_DESKTOP_JSON))
+            : null;
+          if (preloadedData) {
+            try {
+              var clonedData = JSON.parse(JSON.stringify(preloadedData));
+              var themedPre = rethemeLottieJson(clonedData);
+              initWithConfig({
+                container: mountEl,
+                renderer: "svg",
+                loop: false,
+                autoplay: false,
+                animationData: themedPre
+              });
+              return;
+            } catch (e) {}
+          }
+          var __cxProto = (typeof window !== "undefined" && window.location) ? window.location.protocol : "";
+          var __cxCanFetch = !(typeof window !== "undefined" && window.__CX_STANDALONE_PREVIEW__) && __cxProto !== "file:" && __cxProto !== "about:" && __cxProto !== "blob:" && __cxProto !== "data:";
+          if (__cxCanFetch && typeof window.fetch === "function") {
             window.fetch(targetUrl)
               .then(function (res) {
                 if (!res.ok) throw new Error("HTTP " + res.status);
@@ -1778,36 +2278,38 @@
                 initWithConfig({
                   container: mountEl,
                   renderer: "svg",
-                  loop: true,
-                  autoplay: isLottieInView,
+                  loop: false,
+                  autoplay: false,
                   animationData: themedJson
                 });
               })
               .catch(function () {
-                initWithConfig({
-                  container: mountEl,
-                  renderer: "svg",
-                  loop: true,
-                  autoplay: isLottieInView,
-                  path: targetUrl
-                });
+                if (mountEl) mountEl.remove();
+                mountEl = null;
+                frozenSvg.style.display = "";
               });
-          } else {
-            initWithConfig({
-              container: mountEl,
-              renderer: "svg",
-              loop: true,
-              autoplay: isLottieInView,
-              path: targetUrl
-            });
           }
         };
 
-        var s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js";
-        s.async = true;
-        s.onload = mountLottie;
-        if (!prefersReduced) document.head.appendChild(s);
+        if (!prefersReduced) {
+          if (!window.__cxLottieResizeBound) {
+            window.__cxLottieResizeBound = true;
+            var __cxLottieResizeTimer = null;
+            window.addEventListener("resize", function () {
+              clearTimeout(__cxLottieResizeTimer);
+              __cxLottieResizeTimer = setTimeout(function () { if (window.lottie) mountLottie(); }, 200);
+            }, { passive: true });
+          }
+          if (window.lottie) {
+            mountLottie();
+          } else {
+            var s = document.createElement("script");
+            s.src = "https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js";
+            s.async = true;
+            s.onload = mountLottie;
+            document.head.appendChild(s);
+          }
+        }
       }
     }
 
