@@ -41,7 +41,8 @@
 
 #problems-solved-section .cx-ps-banner-title {
   font-size: clamp(44px, 4.3vw, 66px) !important;
-  line-height: 1.03 !important;
+  line-height: 1.16 !important;
+  padding-bottom: 0.12em !important;
   letter-spacing: -0.032em !important;
   margin: 0 0 18px !important;
 }
@@ -62,7 +63,9 @@
 
 #problems-solved-section .cx-ps-item {
   padding-bottom: 52px !important;
-  border-bottom: 1px solid rgba(6, 8, 33, 0.09) !important;
+  border-bottom: none !important;
+  contain: layout style !important;
+  overflow: visible !important;
   scroll-margin-top: 96px !important;
 }
 
@@ -92,11 +95,12 @@
 }
 
 #problems-solved-section .cx-ps-title {
-  margin: 0 0 12px !important;
+  margin: 0 0 4px !important;
+  padding-bottom: 0.14em !important;
   font-family: var(--font-display, "Plus Jakarta Sans", sans-serif) !important;
   font-size: clamp(36px, 3.4vw, 54px) !important;
   font-weight: 800 !important;
-  line-height: 1.08 !important;
+  line-height: 1.18 !important;
   letter-spacing: -0.032em !important;
   background: linear-gradient(135deg, #060821 0%, #0170BA 52%, #1998DC 100%) !important;
   -webkit-background-clip: text !important;
@@ -199,7 +203,7 @@
   border-radius: 999px !important;
   background: rgba(6, 14, 38, 0.88) !important;
   border: 1px solid rgba(148, 163, 184, 0.28) !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+  font-family: "Plus Jakarta Sans", Inter, -apple-system, BlinkMacSystemFont, sans-serif !important;
   font-size: 10.5px !important;
   font-weight: 700 !important;
   letter-spacing: 0.12em !important;
@@ -517,3 +521,45 @@
 }
 
 #ai-engine-section .cx-lottie-stage > div:first-child > svg > g > g:nth-child(-n+5) { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+
+/* ==========================================================================
+   V12 SURGICAL LAYOUT, SEAMLESS COLOR GRADIENT & SMOOTH SCROLL SYNC
+   ========================================================================== */
+html {
+  overscroll-behavior-y: none;
+}
+
+#problems-solved-section.cx-ps-section {
+  background: linear-gradient(180deg, #F5FAFF 0%, #FFFFFF 36%, #F5FAFF 100%) !important;
+}
+
+#problems-solved-section .cx-ps-dark-banner {
+  background:
+    radial-gradient(62% 56% at 66% 42%, rgba(25, 152, 220, 0.24) 0%, rgba(1, 112, 186, 0.10) 42%, transparent 72%),
+    linear-gradient(155deg, #040B1D 0%, #071430 52%, #030816 100%) !important;
+}
+
+#problems-solved-section .cx-ps-title {
+  background: linear-gradient(135deg, #060821 0%, #0C2E6B 52%, #0170BA 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+@media (min-width: 1121px) {
+  #engineered-impact-section .cx-lsh-v2 {
+    min-height: auto !important;
+    padding: 30px 0 46px !important;
+  }
+  #engineered-impact-section .cx-lsh-v2-visual {
+    min-height: 430px !important;
+    padding-top: 48px !important;
+    padding-bottom: 16px !important;
+  }
+  #engineered-impact-section .cx-lsh-v2 .cx-lsh-perspective {
+    margin-top: 44px !important;
+  }
+  #engineered-impact-section .cx-lsh-v2-labels {
+    top: 50% !important;
+  }
+}
