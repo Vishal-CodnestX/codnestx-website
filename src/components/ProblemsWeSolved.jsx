@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import '../styles/codnestx-redesign.css';
 
 const INDUSTRIES = [
@@ -204,6 +204,105 @@ const INDUSTRIES = [
 
 export default function ProblemsWeSolved() {
   const [activeIdx, setActiveIdx] = useState(1);
+  const bannerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const setShapeRef = useRef(null);
+
+  useEffect(() => {
+    const bn = bannerRef.current;
+    const cv = canvasRef.current;
+    if (!bn || !cv) return;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+
+    const punch = (c, f) => {
+      c.globalCompositeOperation = 'destination-out';
+      f();
+      c.globalCompositeOperation = 'source-over';
+    };
+
+    const shapes = [
+      (c) => { c.translate(18, 16); for (let i = 0; i < 8; i++) { c.save(); c.rotate(i * Math.PI / 4); c.fillRect(-2, -14, 4, 5); c.restore(); } c.beginPath(); c.arc(0, 0, 10.5, 0, 7); c.fill(); punch(c, () => { c.beginPath(); c.arc(0, 0, 4.5, 0, 7); c.fill(); }); },
+      (c) => { c.fillRect(5, 8, 16, 13); c.beginPath(); c.moveTo(22, 12); c.lineTo(29, 12); c.lineTo(33, 17); c.lineTo(33, 21); c.lineTo(22, 21); c.closePath(); c.fill(); punch(c, () => { c.fillRect(25, 14, 5, 3); [11, 27].forEach((x) => { c.beginPath(); c.arc(x, 22, 4.8, 0, 7); c.fill(); }); }); [11, 27].forEach((x) => { c.beginPath(); c.arc(x, 23, 3.4, 0, 7); c.fill(); }); },
+      (c) => { c.fillRect(9, 3, 14, 26); c.fillRect(23, 12, 8, 17); c.fillRect(4, 29, 28, 1.8); punch(c, () => { for (let r = 0; r < 5; r++) for (let k = 0; k < 3; k++) c.fillRect(11.2 + k * 4.2, 5.5 + r * 4.4, 2.4, 2.4); for (let r = 0; r < 3; r++) for (let k = 0; k < 2; k++) c.fillRect(25 + k * 3.2, 14.5 + r * 4.6, 2, 2); }); },
+      (c) => { c.fillRect(8, 10, 20, 18); c.lineWidth = 2.2; c.beginPath(); c.arc(18, 10, 5.5, Math.PI, 2 * Math.PI); c.stroke(); punch(c, () => { [14, 22].forEach((x) => { c.beginPath(); c.arc(x, 14, 1.1, 0, 7); c.fill(); }); }); },
+      (c) => { c.beginPath(); c.roundRect(14, 3, 8, 26, 2); c.fill(); c.beginPath(); c.roundRect(5, 12, 26, 8, 2); c.fill(); c.lineWidth = 1.4; c.beginPath(); c.arc(18, 16, 15.5, 0, 7); c.stroke(); },
+      (c) => { c.beginPath(); c.roundRect(5, 10, 26, 18, 2); c.fill(); c.lineWidth = 2.4; c.lineJoin = 'round'; c.beginPath(); c.moveTo(13, 10); c.lineTo(13, 5.5); c.lineTo(23, 5.5); c.lineTo(23, 10); c.stroke(); punch(c, () => { c.fillRect(5, 17, 26, 1.6); }); c.fillRect(16, 15.2, 4, 4.6); }
+    ];
+
+    const GAP = 0.86, BG_R = 0.95, BG_A = 0.34, SHAPE_R = 1.84, K = 0.050, DAMP = 0.86, CYCLE = 4500, POP = 0.70, POPADD = 0.7;
+    let W = bn.clientWidth || 460, H = bn.clientHeight || 540, SP = 12.78, SPD = SP * GAP, COLS = 36, ROWS = 42, N = COLS * ROWS, cx = 18, cy = 16, OX = 0, OY = 0;
+    let cov = [], cur, vel, tgt, delay, wc;
+    let idx = 0, t0 = performance.now(), last = t0, timer = null, rafId = 0;
+
+    const buildGrid = () => {
+      W = bn.clientWidth || 460; H = bn.clientHeight || 540;
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      SP = Math.min(W / 36, (H * 0.45) / 30); SPD = SP * GAP;
+      COLS = Math.max(36, Math.ceil(W / SPD) + 2); ROWS = Math.max(36, Math.ceil(H / SPD) + 2); N = COLS * ROWS;
+      cx = Math.round(COLS / 2); cy = Math.round((H * 0.335) / SPD); OX = W * 0.5; OY = H * 0.335;
+      cov = shapes.map((f) => {
+        const o = document.createElement('canvas'); o.width = COLS; o.height = ROWS;
+        const c = o.getContext('2d'); c.fillStyle = '#000'; c.strokeStyle = '#000';
+        c.save(); c.translate(cx - 18, cy - 16); f(c); c.restore();
+        const d = c.getImageData(0, 0, COLS, ROWS).data;
+        const a = new Float32Array(N); for (let i = 0; i < N; i++) a[i] = d[i * 4 + 3] / 255;
+        return a;
+      });
+      cur = new Float32Array(N).fill(BG_R); vel = new Float32Array(N); tgt = new Float32Array(N).fill(BG_R); delay = new Float32Array(N); wc = new Float32Array(N);
+    };
+
+    const chain = () => {
+      for (let i = 0; i < N; i++) { wc[i] = 0.044 + Math.random() * 0.036; delay[i] = 1e9; }
+      const s = Math.min(ROWS - 1, Math.max(0, cy)) * COLS + Math.min(COLS - 1, Math.max(0, cx)); delay[s] = 0; const q = [s];
+      while (q.length) {
+        const i = q.shift(), c = i % COLS, r = (i / COLS) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nc = c + dx, nr = r + dy;
+          if (nc < 0 || nr < 0 || nc >= COLS || nr >= ROWS) continue;
+          const j = nr * COLS + nc, nd = delay[i] + wc[j] * (dx && dy ? 1.4 : 1);
+          if (nd < delay[j] - 1e-4) { delay[j] = nd; q.push(j); }
+        }
+      }
+    };
+
+    const setShape = (k) => {
+      idx = ((k % 6) + 6) % 6;
+      const c2 = cov[idx]; if (!c2) return;
+      for (let i = 0; i < N; i++) tgt[i] = BG_R + Math.pow(c2[i], 0.85) * (SHAPE_R - BG_R);
+      chain(); t0 = performance.now();
+    };
+
+    const restart = () => { clearInterval(timer); timer = setInterval(() => setShape((idx + 1) % 6), CYCLE); };
+
+    const frame = (ts) => {
+      const dt = Math.min((ts - last) / 16.67, 2.5); last = ts; const now = (ts - t0) / 1000;
+      ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#38BDF8';
+      const kd = Math.pow(DAMP, dt);
+      for (let i = 0; i < N; i++) {
+        const col = i % COLS, row = (i / COLS) | 0, x = OX + (col - cx) * SPD, y = OY + (row - cy) * SPD;
+        if (tgt[i] <= BG_R + 0.02 && cur[i] <= BG_R + 0.02) { cur[i] = BG_R; vel[i] = 0; ctx.globalAlpha = BG_A; ctx.beginPath(); ctx.arc(x, y, BG_R, 0, 7); ctx.fill(); continue; }
+        const age = now - delay[i]; let bump = 0;
+        if (age > 0) { vel[i] += (tgt[i] - cur[i]) * K * dt; vel[i] *= kd; cur[i] += vel[i] * dt; if (age < POP && tgt[i] > BG_R + 0.02) bump = Math.sin(Math.PI * age / POP); }
+        const lvl = Math.min(1, Math.max(0, (cur[i] - BG_R) / (SHAPE_R - BG_R)));
+        const r = Math.max(BG_R, cur[i]) + POPADD * bump * (1 - 0.55 * lvl);
+        ctx.globalAlpha = Math.min(1, BG_A + (1 - BG_A) * lvl + 0.25 * bump * (1 - lvl));
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      }
+      rafId = requestAnimationFrame(frame);
+    };
+
+    buildGrid(); setShape(0); restart(); rafId = requestAnimationFrame(frame);
+    setShapeRef.current = (k) => { if (k !== idx) setShape(k); restart(); };
+    return () => { clearInterval(timer); cancelAnimationFrame(rafId); };
+  }, []);
+
+  useEffect(() => {
+    if (setShapeRef.current) setShapeRef.current(activeIdx - 1);
+  }, [activeIdx]);
 
   useEffect(() => {
     const items = document.querySelectorAll('#problems-solved-section .cx-ps-item');
@@ -235,7 +334,8 @@ export default function ProblemsWeSolved() {
       <div className="cx-ps-container">
         <div className="cx-ps-split">
           <aside className="cx-ps-sticky-col">
-            <div className="cx-ps-dark-banner">
+            <div ref={bannerRef} className="cx-ps-dark-banner" style={{ background: "radial-gradient(circle at 60% 40%, #0D2966 0%, #07112B 55%, #040714 100%)" }}>
+              <canvas ref={canvasRef} id="cx-ps-dotmatrix-cv" className="cx-ps-dotmatrix-canvas" aria-hidden="true" />
               <div className="cx-ps-banner-top">
                 <div className="cx-ps-banner-code">
                   <span className="cx-ps-code-box" />

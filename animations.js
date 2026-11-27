@@ -121,9 +121,9 @@
     var lenis = null;
     if (hasLenis && !prefersReduced) {
       lenis = new window.Lenis({
-        lerp: 0.148,
-        wheelMultiplier: 1.08,
-        touchMultiplier: 1.5,
+        lerp: 0.085,
+        wheelMultiplier: 0.95,
+        touchMultiplier: 1.4,
         smoothWheel: true,
         syncTouch: false,
         autoRaf: false
@@ -155,26 +155,35 @@
     var headerScrolled = false;
     var headerHidden = false;
     var headerScrollQueued = false;
+    var headerDeltaAccum = 0;
 
     function applyHeaderScroll() {
       headerScrollQueued = false;
       var y = window.scrollY || window.pageYOffset || 0;
+      var dy = y - lastY;
       if (header) {
         var nextScrolled = y > 80;
         if (nextScrolled !== headerScrolled) {
           headerScrolled = nextScrolled;
           header.classList.toggle("is-scrolled", nextScrolled);
         }
-        if (y > 180 && y - lastY > 8 && !mobileMenuOpen && !modalOpen) {
+        if (dy > 0) {
+          headerDeltaAccum = headerDeltaAccum > 0 ? headerDeltaAccum + dy : dy;
+        } else if (dy < 0) {
+          headerDeltaAccum = headerDeltaAccum < 0 ? headerDeltaAccum + dy : dy;
+        }
+        if (y > 160 && headerDeltaAccum > 18 && !mobileMenuOpen && !modalOpen) {
           if (!headerHidden) {
             headerHidden = true;
             header.classList.add("is-hidden");
           }
-        } else if (lastY - y > 6 || y <= 100) {
+          headerDeltaAccum = 0;
+        } else if (headerDeltaAccum < -10 || y <= 100) {
           if (headerHidden) {
             headerHidden = false;
             header.classList.remove("is-hidden");
           }
+          headerDeltaAccum = 0;
         }
       }
       lastY = y;

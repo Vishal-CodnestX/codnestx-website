@@ -1251,28 +1251,87 @@
 
     var total = items.length;
     var circumference = 2 * Math.PI * 26;
+    var lastIdx = -1;
+
+    var segEls = Array.prototype.slice.call(document.querySelectorAll("#problems-solved-section .cx-ps-seg"));
+    segEls.forEach(function (btn, sIdx) {
+      btn.addEventListener("click", function () {
+        var targetItem = items[sIdx];
+        if (!targetItem) return;
+        if (window.__cxLenis && typeof window.__cxLenis.scrollTo === "function") {
+          window.__cxLenis.scrollTo(targetItem, { offset: -120, duration: 0.9 });
+        } else {
+          targetItem.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
+    });
 
     function setActive(idx) {
-      counterEl.textContent = idx + "/" + total;
+      if (idx === lastIdx) return;
+      lastIdx = idx;
+      window.__cxPsActiveIdx = idx - 1;
+      var curStr = idx < 10 ? "0" + idx : String(idx);
+      var totStr = total < 10 ? "0" + total : String(total);
+      counterEl.innerHTML = '<span class="cx-ps-dial-cur">' + curStr + '</span><span class="cx-ps-dial-sep">/</span><span class="cx-ps-dial-tot">' + totStr + '</span>';
       if (arcEl) {
         var frac = Math.max(1, Math.min(total, idx)) / total;
         arcEl.style.strokeDashoffset = (circumference * (1 - frac)).toFixed(2);
       }
+      for (var s = 0; s < segEls.length; s++) {
+        segEls[s].classList.toggle("is-active", s === idx - 1);
+        segEls[s].classList.toggle("is-done", s < idx - 1);
+      }
+      if (typeof window.__cxPsDotMatrixSet === "function") {
+        window.__cxPsDotMatrixSet(idx - 1);
+      }
     }
 
+    function syncActiveFromScroll() {
+      var anchorY = window.innerHeight * 0.42;
+      var bestIdx = 1;
+      var bestDist = Infinity;
+      for (var i = 0; i < items.length; i++) {
+        var rect = items[i].getBoundingClientRect();
+        var center = rect.top + rect.height * 0.5;
+        var dist = Math.abs(center - anchorY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = parseInt(items[i].getAttribute("data-ps-index") || String(i + 1), 10);
+        }
+      }
+      setActive(bestIdx);
+    }
+
+    var psScrollRaf = 0;
+    function onPsScroll() {
+      if (psScrollRaf) return;
+      psScrollRaf = requestAnimationFrame(function () {
+        psScrollRaf = 0;
+        syncActiveFromScroll();
+      });
+    }
+    window.addEventListener("scroll", onPsScroll, { passive: true });
+    window.addEventListener("resize", onPsScroll, { passive: true });
+
     if ("IntersectionObserver" in window) {
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (entry) {
-          if (entry.isIntersecting) {
-            var idx = parseInt(entry.target.getAttribute("data-ps-index") || "1", 10);
-            setActive(idx);
-          }
-        });
-      }, { rootMargin: "-30% 0px -45% 0px", threshold: 0.05 });
+      var io = new IntersectionObserver(function () {
+        syncActiveFromScroll();
+      }, { rootMargin: "-20% 0px -35% 0px", threshold: [0, 0.25, 0.5] });
 
       items.forEach(function (el) { io.observe(el); });
     }
-    setActive(1);
+    syncActiveFromScroll();
+    var psImgs = document.querySelectorAll("#problems-solved-section .cx-ps-card-bg-img");
+    var predecode = function () {
+      for (var i = 0; i < psImgs.length; i++) {
+        if (psImgs[i].decode) psImgs[i].decode().catch(function () {});
+      }
+    };
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(predecode, { timeout: 1500 });
+    } else {
+      setTimeout(predecode, 400);
+    }
   }
 
   function initFooterEntrance() {
@@ -1295,7 +1354,7 @@
           fio.disconnect();
         }
       });
-    }, { threshold: 0.12 });
+    }, { rootMargin: "160px 0px 160px 0px", threshold: 0.01 });
     fio.observe(footerEl);
   }
 
@@ -1343,7 +1402,7 @@
       var dt = lastStepTs ? Math.min(0.05, Math.max(0.004, (now - lastStepTs) / 1000)) : 0.0167;
       lastStepTs = now;
       var diff = targetY - currentY;
-      if (Math.abs(diff) < 0.35) {
+      if (Math.abs(diff) < 0.15) {
         currentY = targetY;
         window.scrollTo(0, currentY);
         if (window.ScrollTrigger) window.ScrollTrigger.update();
@@ -1351,7 +1410,7 @@
         lastStepTs = 0;
         return;
       }
-      var factor = 1 - Math.exp(-14.5 * dt);
+      var factor = 1 - Math.exp(-9.2 * dt);
       currentY += diff * factor;
       window.scrollTo(0, currentY);
       if (window.ScrollTrigger) window.ScrollTrigger.update();
@@ -1370,7 +1429,7 @@
       var dy = e.deltaY;
       if (e.deltaMode === 1) dy *= 32;
       else if (e.deltaMode === 2) dy *= window.innerHeight;
-      targetY = Math.max(0, Math.min(maxScroll(), targetY + dy * 1.0));
+      targetY = Math.max(0, Math.min(maxScroll(), targetY + dy * 0.95));
       if (!animating) {
         animating = true;
         requestAnimationFrame(step);
@@ -1422,49 +1481,13 @@
   window.addEventListener("resize", function () { rect = null; }, { passive: true });
 })();
 
-/* === cx-v7-perf-observer === */
-(function () {
-  if (!("IntersectionObserver" in window)) return;
-  function initAnimPauseObserver() {
-    var selectors = [
-      "#hero-section",
-      "#kpi-bento-section",
-      "#problems-solved-section",
-      "#trusted-section",
-      "#ai-engine-section",
-      "#cx-cta-section",
-      "#engineered-impact-section",
-      "#bottom-footer"
-    ];
-    var els = [];
-    selectors.forEach(function (sel) {
-      var el = document.querySelector(sel);
-      if (el) els.push(el);
-    });
-    if (!els.length) return;
-
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        entry.target.classList.toggle("cx-anim-paused", !entry.isIntersecting);
-      });
-    }, { rootMargin: "220px 0px 220px 0px", threshold: 0.01 });
-
-    els.forEach(function (el) { io.observe(el); });
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initAnimPauseObserver);
-  } else {
-    initAnimPauseObserver();
-  }
-})();
-
 /* === cx-v10-viewport-perf === */
 (function () {
   if (!("IntersectionObserver" in window)) return;
   function initViewportAnimOptimizer() {
     var targets = Array.prototype.slice.call(
       document.querySelectorAll(
-        "#hero-section, .cx-trusted-section, #problems-solved-section, #trusted-section, .cx-ba3d-section, .cx-city-section, #cx-cta-section, #engineered-impact-section, #bottom-footer"
+        "#hero-section, #kpi-bento-section, .cx-trusted-section, #problems-solved-section, #trusted-section, #ai-engine-section, .cx-ba3d-section, .cx-city-section, #cx-cta-section, #engineered-impact-section, #bottom-footer"
       )
     );
     if (!targets.length) return;
@@ -1475,7 +1498,7 @@
           e.target.classList.toggle("cx-anim-paused", !e.isIntersecting);
         }
       },
-      { rootMargin: "260px 0px 260px 0px", threshold: 0.01 }
+      { rootMargin: "320px 0px 320px 0px", threshold: 0.01 }
     );
     targets.forEach(function (el) { io.observe(el); });
   }
@@ -1483,5 +1506,228 @@
     document.addEventListener("DOMContentLoaded", initViewportAnimOptimizer);
   } else {
     initViewportAnimOptimizer();
+  }
+})();
+
+/* === cx-v14-dotmatrix-script === */
+(function () {
+  function initPsDotMatrix() {
+    var bn = document.querySelector('#problems-solved-section .cx-ps-dark-banner');
+    var cv = document.getElementById('cx-ps-dotmatrix-cv');
+    if (!bn || !cv) return;
+    var ctx = cv.getContext('2d');
+    if (!ctx) return;
+
+    function punch(c, f) {
+      c.globalCompositeOperation = 'destination-out';
+      f();
+      c.globalCompositeOperation = 'source-over';
+    }
+
+    var shapes = [
+      function (c) {
+        c.translate(18, 16);
+        for (var i = 0; i < 8; i++) {
+          c.save();
+          c.rotate(i * Math.PI / 4);
+          c.fillRect(-2, -14, 4, 5);
+          c.restore();
+        }
+        c.beginPath(); c.arc(0, 0, 10.5, 0, 7); c.fill();
+        punch(c, function () { c.beginPath(); c.arc(0, 0, 4.5, 0, 7); c.fill(); });
+      },
+      function (c) {
+        c.fillRect(5, 8, 16, 13);
+        c.beginPath(); c.moveTo(22, 12); c.lineTo(29, 12); c.lineTo(33, 17); c.lineTo(33, 21); c.lineTo(22, 21); c.closePath(); c.fill();
+        punch(c, function () {
+          c.fillRect(25, 14, 5, 3);
+          [11, 27].forEach(function (x) { c.beginPath(); c.arc(x, 22, 4.8, 0, 7); c.fill(); });
+        });
+        [11, 27].forEach(function (x) { c.beginPath(); c.arc(x, 23, 3.4, 0, 7); c.fill(); });
+      },
+      function (c) {
+        c.fillRect(9, 3, 14, 26); c.fillRect(23, 12, 8, 17); c.fillRect(4, 29, 28, 1.8);
+        punch(c, function () {
+          for (var r = 0; r < 5; r++) for (var k = 0; k < 3; k++) c.fillRect(11.2 + k * 4.2, 5.5 + r * 4.4, 2.4, 2.4);
+          for (var r2 = 0; r2 < 3; r2++) for (var k2 = 0; k2 < 2; k2++) c.fillRect(25 + k2 * 3.2, 14.5 + r2 * 4.6, 2, 2);
+        });
+      },
+      function (c) {
+        c.fillRect(8, 10, 20, 18);
+        c.lineWidth = 2.2;
+        c.beginPath(); c.arc(18, 10, 5.5, Math.PI, 2 * Math.PI); c.stroke();
+        punch(c, function () {
+          [14, 22].forEach(function (x) { c.beginPath(); c.arc(x, 14, 1.1, 0, 7); c.fill(); });
+        });
+      },
+      function (c) {
+        c.beginPath(); c.roundRect(14, 3, 8, 26, 2); c.fill();
+        c.beginPath(); c.roundRect(5, 12, 26, 8, 2); c.fill();
+        c.lineWidth = 1.4;
+        c.beginPath(); c.arc(18, 16, 15.5, 0, 7); c.stroke();
+      },
+      function (c) {
+        c.beginPath(); c.roundRect(5, 10, 26, 18, 2); c.fill();
+        c.lineWidth = 2.4; c.lineJoin = 'round';
+        c.beginPath(); c.moveTo(13, 10); c.lineTo(13, 5.5); c.lineTo(23, 5.5); c.lineTo(23, 10); c.stroke();
+        punch(c, function () { c.fillRect(5, 17, 26, 1.6); });
+        c.fillRect(16, 15.2, 4, 4.6);
+      }
+    ];
+
+    var GAP = 0.78;
+    var BG_R = 1.15, BG_A = 0.34, SHAPE_R = 2.38, K = 0.052, DAMP = 0.86, POP = 0.70, POPADD = 0.85;
+
+    var W = 460, H = 540, SP = 12.78, SPD = SP * GAP, COLS = 36, ROWS = 42, N = COLS * ROWS;
+    var cx = 18, cy = 16, OX = 0, OY = 0;
+    var cov = [], cur, vel, tgt, delay, wc;
+    var idx = -1, t0 = performance.now(), last = t0;
+
+    function buildGrid() {
+      W = bn.clientWidth || 460;
+      H = bn.clientHeight || 540;
+      var dpr = window.devicePixelRatio || 1;
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Enlarged dot-matrix icon filling banner prominently while preserving crisp grid pitch
+      SP = Math.min((W * 0.88) / 34, (H * 0.74) / 32);
+      SPD = SP * GAP;
+      COLS = Math.max(36, Math.ceil(W / SPD) + 2);
+      ROWS = Math.max(36, Math.ceil(H / SPD) + 2);
+      N = COLS * ROWS;
+      cx = Math.round(COLS / 2);
+      cy = Math.round((H * 0.44) / SPD);
+      OX = W * 0.5;
+      OY = H * 0.44;
+
+      cov = shapes.map(function (f) {
+        var o = document.createElement('canvas');
+        o.width = COLS; o.height = ROWS;
+        var c = o.getContext('2d');
+        c.fillStyle = '#000'; c.strokeStyle = '#000';
+        c.save();
+        c.translate(cx - 18, cy - 16);
+        f(c);
+        c.restore();
+        var d = c.getImageData(0, 0, COLS, ROWS).data;
+        var a = new Float32Array(N);
+        for (var i = 0; i < N; i++) a[i] = d[i * 4 + 3] / 255;
+        return a;
+      });
+
+      cur = new Float32Array(N).fill(BG_R);
+      vel = new Float32Array(N);
+      tgt = new Float32Array(N).fill(BG_R);
+      delay = new Float32Array(N);
+      wc = new Float32Array(N);
+    }
+
+    function chain() {
+      for (var i = 0; i < N; i++) {
+        wc[i] = 0.044 + Math.random() * 0.036;
+        delay[i] = 1e9;
+      }
+      var s = Math.min(ROWS - 1, Math.max(0, cy)) * COLS + Math.min(COLS - 1, Math.max(0, cx));
+      delay[s] = 0;
+      var q = [s];
+      while (q.length) {
+        var curIdx = q.shift(), col = curIdx % COLS, row = (curIdx / COLS) | 0;
+        for (var dy = -1; dy <= 1; dy++) {
+          for (var dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            var nc = col + dx, nr = row + dy;
+            if (nc < 0 || nr < 0 || nc >= COLS || nr >= ROWS) continue;
+            var j = nr * COLS + nc;
+            var nd = delay[curIdx] + wc[j] * (dx && dy ? 1.4 : 1);
+            if (nd < delay[j] - 1e-4) {
+              delay[j] = nd;
+              q.push(j);
+            }
+          }
+        }
+      }
+    }
+
+    function set(k) {
+      idx = ((k % 6) + 6) % 6;
+      var c2 = cov[idx];
+      if (!c2) return;
+      for (var i = 0; i < N; i++) {
+        tgt[i] = BG_R + Math.pow(c2[i], 0.85) * (SHAPE_R - BG_R);
+      }
+      chain();
+      t0 = performance.now();
+    }
+
+
+
+    function frame(ts) {
+      var dt = Math.min((ts - last) / 16.67, 2.5);
+      last = ts;
+      var now = (ts - t0) / 1000;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#38BDF8';
+      var kd = Math.pow(DAMP, dt);
+      for (var i = 0; i < N; i++) {
+        var col = i % COLS, row = (i / COLS) | 0;
+        var x = OX + (col - cx) * SPD;
+        var y = OY + (row - cy) * SPD;
+        if (x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
+        if (tgt[i] <= BG_R + 0.02 && cur[i] <= BG_R + 0.02) {
+          cur[i] = BG_R; vel[i] = 0;
+          ctx.globalAlpha = BG_A;
+          ctx.beginPath(); ctx.arc(x, y, BG_R, 0, 7); ctx.fill();
+          continue;
+        }
+        var age = now - delay[i];
+        var bump = 0;
+        if (age > 0) {
+          vel[i] += (tgt[i] - cur[i]) * K * dt;
+          vel[i] *= kd;
+          cur[i] += vel[i] * dt;
+          if (age < POP && tgt[i] > BG_R + 0.02) bump = Math.sin(Math.PI * age / POP);
+        }
+        var lvl = Math.min(1, Math.max(0, (cur[i] - BG_R) / (SHAPE_R - BG_R)));
+        var r = Math.max(BG_R, cur[i]) + POPADD * bump * (1 - 0.55 * lvl);
+        ctx.globalAlpha = Math.min(1, BG_A + (1 - BG_A) * lvl + 0.25 * bump * (1 - lvl));
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    }
+
+    buildGrid();
+    var initialIdx = (typeof window.__cxPsActiveIdx === 'number' && window.__cxPsActiveIdx >= 0 && window.__cxPsActiveIdx < 6)
+      ? window.__cxPsActiveIdx : 0;
+    set(initialIdx);
+    requestAnimationFrame(frame);
+
+    window.__cxPsDotMatrixSet = function (k) {
+      if (typeof k !== 'number' || k < 0 || k >= 6) return;
+      if (k !== idx) set(k);
+    };
+
+    var resizeTimer = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      var ro = new ResizeObserver(function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+          var nw = bn.clientWidth || 460;
+          var nh = bn.clientHeight || 540;
+          if (Math.abs(nw - W) > 4 || Math.abs(nh - H) > 4) {
+            buildGrid();
+            set(idx);
+          }
+        }, 120);
+      });
+      ro.observe(bn);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPsDotMatrix);
+  } else {
+    initPsDotMatrix();
   }
 })();

@@ -13,12 +13,12 @@ export function useSmoothScroll() {
     if (prefersReduced) return;
 
     const lenis = new Lenis({
-      lerp: 0.148,
+      lerp: 0.085,
       orientation: 'vertical',
       gestureOrientation: 'vertical',
       smoothWheel: true,
-      wheelMultiplier: 1.08,
-      touchMultiplier: 1.5,
+      wheelMultiplier: 0.95,
+      touchMultiplier: 1.4,
       syncTouch: false,
       autoRaf: false,
       infinite: false,
